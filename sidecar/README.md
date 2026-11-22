@@ -1,6 +1,6 @@
 # SpecTuner sidecar
 
-`spectuner-sidecar.exe` does all Unity-specific work for SpecTuner: detecting
+`spectuner-sidecar` (`.exe` on Windows) does all Unity-specific work for SpecTuner: detecting
 a game and whether it is in scope, snapshots and undo, installing BepInEx and
 the probe plugin, changing quality settings, benchmarks, reading the game's
 code, building and testing mods, reading logs, and putting past changes back.
@@ -13,8 +13,9 @@ behind its design in [`docs/design-decisions.md`](../docs/design-decisions.md).
 
 ## Requirements
 
-- Windows x64.
-- .NET SDK 10.0 to build. Players need nothing: the published exe is
+- Native Unity Mono games on Windows x64, Linux x64 and macOS (Apple Silicon, and Intel for games with an x86_64 build).
+  All platform differences live in `src/SpecTuner.Sidecar/Platform/` (see "Platforms" in the contract).
+- .NET SDK 10.0 to build. Players need nothing: the published program is
   self-contained.
 - Git Bash for `publish.sh`.
 
@@ -28,11 +29,15 @@ dotnet test SpecTuner.Sidecar.slnx
 ```
 
 `dotnet test` takes about 45 seconds once built and should report
-`Passed! - Failed: 0` (247 tests today).
+`Passed! - Failed: 0`. A few tests apply to one system only; elsewhere they are
+reported as skipped with the reason (on Windows: 6, the Linux and macOS process, file-mode and linked-folder tests).
 
-`publish.sh` works from any folder and writes
-`artifacts/sidecar/spectuner-sidecar.exe` at the repository root (about
-92 MB). It runs:
+`publish.sh [win-x64|linux-x64|osx-arm64|osx-x64]` works from any folder. The
+default, `win-x64`, writes `artifacts/sidecar/spectuner-sidecar.exe` at the
+repository root (about 92 MB); the others write
+`artifacts/sidecar/<rid>/spectuner-sidecar`. Published on Windows, a Linux or
+macOS program has no execute bit and no signature: `chmod +x` it, and sign an
+`osx-arm64` one on a Mac (`codesign -s -` at least). It runs (here for win-x64):
 
 ```sh
 dotnet publish src/SpecTuner.Sidecar/SpecTuner.Sidecar.csproj -c Release -r win-x64 \
@@ -58,6 +63,8 @@ into the app.
 | `search-code` | Searches the game's decompiled code by name or text |
 | `read-code` | Reads one member, a whole short type, or an outline of a long one |
 | `build-plugin` | Checks and compiles a mod, installs it as one change, and starts the game once to test it |
+| `play` | Starts the game for the player, with or without SpecTuner's changes, and returns at once |
+| `diagnose` | A read-only report on the system and a game folder, without paths or names, for bug reports |
 
 Examples, on a copy of a game:
 
@@ -70,9 +77,10 @@ echo '{"gamePath":"C:/Games/SampleGame","trySettings":{"shadows":"Disable"}}' | 
 $exe revert --request request.json
 ```
 
-`SPECTUNER_HOME` overrides the state folder (default
-`%LOCALAPPDATA%\SpecTuner`). Per-game state lives in `games/<id>/` below it,
-never in the game folder.
+`SPECTUNER_HOME` overrides the state folder. The defaults are
+`%LOCALAPPDATA%\SpecTuner` on Windows, `~/Library/Application Support/SpecTuner`
+on macOS and `${XDG_DATA_HOME:-~/.local/share}/SpecTuner` on Linux. Per-game
+state lives in `games/<id>/` below it, never in the game folder.
 
 ## Layout
 
@@ -80,8 +88,8 @@ never in the game folder.
 sidecar/
   SpecTuner.Sidecar.slnx
   nuget.config                  nuget.org only, so builds do not depend on a developer's own NuGet sources
-  publish.sh                    builds artifacts/sidecar/spectuner-sidecar.exe
-  assets/bepinex/               BepInEx 5.4.23.6 win x64 zip, unmodified (embedded in the exe)
+  publish.sh                    builds artifacts/sidecar/spectuner-sidecar.exe (or <rid>/spectuner-sidecar)
+  assets/bepinex/               BepInEx 5.4.23.6 zips for win x64, linux x64, macos universal, unmodified (all embedded)
   src/SpecTuner.Sidecar/        net10.0 console app, assembly spectuner-sidecar
     Program.cs                  UTF-8 stdin and stdout, calls CommandHost
     Cli/                        CommandHost (registry and dispatch), envelope, request, error codes
@@ -93,7 +101,12 @@ sidecar/
     Probe/                      probe plugin source, embedded and compiled per game at install;
                                 FrameStats.cs and MiniJson.cs are also compiled into the sidecar
     Quality/                    QualitySettingsFile: valid keys, ranges, merge, the overrides file
-    Benchmark/                  GameLauncher (start, wait, close), JobObject (kill on close),
+    Platform/                   everything that differs per system: Platforms (profile from the host or
+                                SPECTUNER_PLATFORM), layouts (WindowsLayout, LinuxLayout, MacLayout),
+                                ExecutableHeader (ELF, Mach-O), LoaderKit (package, files, launch),
+                                UserFolders, game processes (JobObject on Windows, signals and
+                                running.json on Linux and macOS), HostFiles, HostFacts
+    Benchmark/                  GameLauncher (start, wait, close),
                                 BenchmarkHistory, Verdict (the trial rules)
     Logs/                       LogReader: filtering, errors, plugin list, user path scrubbing
     Games/                      GameInspector (scope gate), Signatures (anti-cheat and networking tables),
@@ -123,16 +136,21 @@ agent as a tool" in `CLAUDE.md`.
 
 ## How the tests work
 
-Tests never launch a real game. They build fake game folders: minimal PE
+Tests never launch a real game. They build fake game folders shaped like a
+Windows, Linux or macOS game (`GameFixture.Create`): minimal PE, ELF or Mach-O
 headers, the test assembly as `Assembly-CSharp.dll`, a stub `UnityEngine.dll`
 with the API the probe uses, and .NET's own mscorlib and netstandard facades,
 so the real probe source compiles. Every test sets `SPECTUNER_HOME` to a temp
 folder.
 
-One test starts a copy of `PING.EXE`, renamed to the fake game's exe, to check
-`GAME_RUNNING`. Launch tests use `SpecTuner.FakeGame`, controlled by the
-environment variables `SPECTUNER_FAKE_GAME` (`result`, `crash` or `hang`) and
-`SPECTUNER_FAKE_GAME_FPS`.
+Linux and macOS logic runs on every system through the platform switch
+(`SidecarTest.UsePlatform`, `CreateGame(GamePlatform.Linux)`): layout, scope gate,
+install and restore, launch environment. Launch and `play` tests use
+`SpecTuner.FakeGame` on the host's own layout, controlled by the environment
+variables `SPECTUNER_FAKE_GAME` (`result`, `crash`, `hang` or `linger`),
+`SPECTUNER_FAKE_GAME_FPS` and `SPECTUNER_FAKE_GAME_LAUNCH_FILE` (records the
+arguments and loader variables it received). Tests for one system only carry
+`[OSCondition]` with the reason.
 
 Anything that needs a real game or BepInEx at run time, such as a mod really
 loading, is not covered by `dotnet test`. Check it by hand on a copy of a

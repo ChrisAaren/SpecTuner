@@ -18,7 +18,8 @@ export default Plugin.define({
     // The modder is the only agent a session can use, also after a config file adds one (see agents.ts).
     const unlock = await SpecTunerAgents.install(ctx)
 
-    // The Changes panel reads the game and its changes, undoes them and puts past ones back, without the model.
+    // The Changes panel reads the game and its changes, undoes them, puts past ones back and starts the game, without
+    // the model. Starting the game is not a tool: the model never starts it on its own.
     const rpc = await ctx.rpc.register(SpecTunerRpc.Definition, {
       status: (_input, context) => SpecTunerChanges.status({ game, exe, signal: context.signal }),
       undo: (input, context) =>
@@ -26,6 +27,8 @@ export default Plugin.define({
       restore: (_input, context) => SpecTunerChanges.restore({ game, exe, signal: context.signal }).finally(changed),
       reapply: (input, context) =>
         SpecTunerChanges.reapply({ game, exe, signal: context.signal }, input.changeId).finally(changed),
+      // Starting the game changes nothing SpecTuner lists, so there is no `changed` to publish.
+      play: (input, context) => SpecTunerChanges.play({ game, exe, signal: context.signal }, input.withChanges),
     })
 
     // "Use a local model" (see local-model.ts).

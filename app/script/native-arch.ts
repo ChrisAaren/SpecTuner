@@ -41,6 +41,20 @@ export namespace NativeArch {
     )
   }
 
+  /**
+   * Fails unless `file` starts with a native `format` image for `arch`. For a .NET single-file program such as
+   * SpecTuner's sidecar: its host is native, and the assemblies packed behind it are managed PE images (IL, or
+   * precompiled with a machine value of their own) that {@link verify} would take for foreign code. Checking the host
+   * still catches the mistakes that matter: another system's sidecar, or another processor's.
+   */
+  export async function verifyHost(file: string, format: "PE" | "ELF" | "Mach-O", arch: "x64" | "arm64") {
+    const bytes = await readFile(file)
+    const host = images(bytes.subarray(0, Math.min(bytes.length, 64 * 1024))).find((image) => image.offset === 0)
+    if (!host) throw new Error(`${file} is not a native executable or library`)
+    if (host.format !== format || !host.arches.includes(arch))
+      throw new Error(`${file} must be a ${format} ${arch} program, but is ${host.format} ${host.arches.join("+")}`)
+  }
+
   /** Whether `file` starts with a native image, so a package scan can skip scripts, data and debug symbols. */
   export async function isNative(file: string) {
     const bytes = await readFile(file)

@@ -4,9 +4,10 @@ import path from "node:path"
 import { Schema } from "effect"
 import { NativeArch } from "../../../script/native-arch"
 
-// SpecTuner packages for Windows only; ffi-rs names its Windows bindings after the MSVC toolchain.
+// The main process loads ffi-rs only on Windows (src/main/windows/attention.ts flashes the taskbar button), so only a
+// Windows package ships a binding; ffi-rs names those after the MSVC toolchain. Elsewhere there is none: undefined.
 export function previewBinding(platform: string, arch: string) {
-  if (platform !== "win32") throw new Error(`SpecTuner packages for Windows only, not ${platform}`)
+  if (platform !== "win32") return undefined
 
   return `win32-${arch}-msvc`
 }
@@ -17,7 +18,7 @@ export function previewBinding(platform: string, arch: string) {
  * loader declares.
  */
 export async function verifyPreviewBinding(resources: string, arch: "arm64" | "x64") {
-  const target = previewBinding("win32", arch)
+  const target = `win32-${arch}-msvc`
   const unpacked = path.join(await realpath(resources), "app.asar.unpacked")
   const pkg = `@yuuang/ffi-rs-${target}`
   const addon = `ffi-rs.${target}.node`

@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
-import { cp, mkdir, rm, stat } from "node:fs/promises"
+import { chmod, cp, mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { SpecTunerConfig } from "@spectuner/modder/config"
+import { SpecTunerEnv } from "@spectuner/modder/env"
 
 // Fills resources/spectuner (git-ignored), which electron-builder ships outside app.asar and an unpackaged run reads:
-//   spectuner-sidecar.exe  from SPECTUNER_SIDECAR, else <harness>/artifacts/sidecar/spectuner-sidecar.exe
+//   spectuner-sidecar[.exe] from SPECTUNER_SIDECAR, else where sidecar/publish.sh writes it for this system:
+//                          <harness>/artifacts/sidecar/spectuner-sidecar.exe on Windows,
+//                          <harness>/artifacts/sidecar/<rid>/spectuner-sidecar elsewhere (linux-x64, osx-arm64)
 //   plugin/                the tool plugin, copied as source from packages/modder/plugin
 //   modder.txt             the modder agent's system prompt
 //   licenses/              THIRD_PARTY_NOTICES.md and the licence texts from the harness repo
@@ -13,8 +16,9 @@ const dir = path.resolve(import.meta.dir, "..")
 const dest = path.join(dir, "resources", "spectuner")
 const modder = path.resolve(dir, "../modder")
 const sidecar = path.resolve(
-  process.env.SPECTUNER_SIDECAR ?? path.resolve(dir, "../../../artifacts/sidecar/spectuner-sidecar.exe"),
+  process.env.SPECTUNER_SIDECAR ?? SpecTunerEnv.publishedSidecar(path.resolve(dir, "../../../artifacts")),
 )
+const sidecarName = SpecTunerEnv.sidecarFile()
 
 await requireFile(sidecar)
 await requireFile(path.join(modder, "plugin", "index.ts"))
@@ -22,7 +26,9 @@ await requireFile(SpecTunerConfig.PROMPT_FILE)
 
 await rm(dest, { recursive: true, force: true })
 await mkdir(dest, { recursive: true })
-await cp(sidecar, path.join(dest, "spectuner-sidecar.exe"))
+await cp(sidecar, path.join(dest, sidecarName))
+// The server starts the sidecar as a program; a build artifact downloaded between jobs may have lost the bit.
+if (process.platform !== "win32") await chmod(path.join(dest, sidecarName), 0o755)
 await cp(path.join(modder, "plugin"), path.join(dest, "plugin"), { recursive: true })
 await cp(SpecTunerConfig.PROMPT_FILE, path.join(dest, "modder.txt"))
 

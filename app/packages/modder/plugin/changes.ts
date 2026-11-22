@@ -4,13 +4,23 @@ import { Option, Schema } from "effect"
 import type { SpecTunerRpc } from "./rpc.ts"
 import { Sidecar } from "./sidecar.ts"
 
-// The Changes panel's handlers: the sidecar's `detect`, `changes`, `revert` and `reapply`, called directly (no model involved)
-// for the game in the session's folder.
+// The Changes panel's handlers: the sidecar's `detect`, `changes`, `revert`, `reapply` and `play`, called directly (no
+// model involved) for the game in the session's folder.
 
 const TIMEOUT_MS = 2 * Sidecar.MINUTE
 
 /** Putting a mod back rebuilds it and starts the game once to check it, like `game_build_mod`. */
 const REAPPLY_TIMEOUT_MS = 10 * Sidecar.MINUTE
+
+/** "Play" returns once the game has started; it never waits for the game to exit. */
+const PLAY_TIMEOUT_MS = Sidecar.MINUTE
+
+const PlayData = Schema.Struct({
+  steamLaunchOption: Schema.optional(Schema.NullOr(Schema.String)),
+  note: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
+const decodePlay = Schema.decodeUnknownOption(PlayData)
 
 const DetectData = Schema.Struct({
   supported: Schema.optional(Schema.Boolean),
@@ -154,6 +164,19 @@ export function restore(options: Options) {
 /** "Apply again": puts a past change back as a new change. For a mod this starts the game once to check it. */
 export function reapply(options: Options, changeId: string) {
   return result(call(options, "reapply", { changeId }, REAPPLY_TIMEOUT_MS))
+}
+
+/**
+ * "Play": starts the game for the player, with or without SpecTuner's changes. The sidecar returns as soon as the game
+ * has started, so the short timeout applies.
+ */
+export async function play(options: Options, withChanges: boolean): Promise<SpecTunerRpc.PlayResult> {
+  const pending = call(options, "play", { withChanges }, PLAY_TIMEOUT_MS)
+  const outcome = await result(pending)
+  const envelope = await pending
+  const data = envelope instanceof Error || !outcome.ok ? undefined : Option.getOrUndefined(decodePlay(envelope.data))
+
+  return { ...outcome, steamLaunchOption: data?.steamLaunchOption ?? null, note: data?.note ?? null }
 }
 
 /** One sidecar call; a helper that cannot run comes back as an Error with a plain message instead of throwing. */

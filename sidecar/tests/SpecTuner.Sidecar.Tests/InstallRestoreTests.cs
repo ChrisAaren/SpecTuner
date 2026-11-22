@@ -26,9 +26,9 @@ public sealed class InstallRestoreTests : SidecarTest
         Assert.IsTrue(data.GetProperty("loader").GetProperty("ours").GetBoolean());
         Assert.IsTrue(game.Exists("BepInEx/core/BepInEx.dll"));
         Assert.IsTrue(game.Exists("BepInEx/core/0Harmony.dll"));
-        Assert.IsTrue(game.Exists("winhttp.dll"));
-        Assert.IsTrue(game.Exists("doorstop_config.ini"));
-        Assert.IsTrue(game.Exists(".doorstop_version"));
+        Assert.IsTrue(game.Exists(OurFiles.LoaderRootFiles[0]));
+        Assert.IsTrue(game.Exists(OurFiles.LoaderRootFiles[1]));
+        Assert.IsTrue(game.Exists(OurFiles.LoaderRootFiles[2]));
         Assert.IsFalse(game.Exists("changelog.txt"), "changelog.txt must not be extracted");
         foreach (var (path, hash) in original)
             Assert.AreEqual(hash, game.Hashes()[path], $"original file changed by install: {path}");
@@ -84,13 +84,13 @@ public sealed class InstallRestoreTests : SidecarTest
     {
         var game = CreateGame();
         AssertOk(Run("install", new { gamePath = game.Root }));
-        File.Delete(game.Full("winhttp.dll"));
+        File.Delete(game.Full(OurFiles.LoaderRootFiles[0]));
 
         var again = Run("install", new { gamePath = game.Root });
 
         AssertOk(again);
         Assert.AreEqual(1, again.GetProperty("data").GetProperty("loader").GetProperty("filesAdded").GetInt32());
-        Assert.IsTrue(game.Exists("winhttp.dll"));
+        Assert.IsTrue(game.Exists(OurFiles.LoaderRootFiles[0]));
     }
 
     [TestMethod]
@@ -134,7 +134,7 @@ public sealed class InstallRestoreTests : SidecarTest
 
         AssertOk(restore);
         Assert.IsTrue(game.Exists("BepInEx/core/BepInEx.dll"));
-        Assert.IsTrue(game.Exists("winhttp.dll"));
+        Assert.IsTrue(game.Exists(OurFiles.LoaderRootFiles[0]));
         Assert.IsTrue(game.Exists("BepInEx/plugins/PlayersMod.dll"));
         Assert.IsFalse(game.Exists("BepInEx/plugins/SpecTuner"));
         Assert.IsFalse(game.Exists("BepInEx/config/spectuner.quality.json"));
@@ -179,7 +179,7 @@ public sealed class InstallRestoreTests : SidecarTest
     {
         var game = CreateGame();
         AssertOk(Run("install", new { gamePath = game.Root }));
-        game.Write("Fixture Game_Data/savegame.dat", "progress");
+        game.Write(game.Native("Fixture Game_Data/savegame.dat"), "progress");
 
         var restore = Run("revert", new { gamePath = game.Root, all = true });
 
@@ -187,8 +187,8 @@ public sealed class InstallRestoreTests : SidecarTest
         var report = restore.GetProperty("data");
         Assert.IsFalse(report.GetProperty("matchesBaseline").GetBoolean());
         Assert.AreEqual(1, report.GetProperty("leftInPlaceCount").GetInt32());
-        Assert.AreEqual("Fixture Game_Data/savegame.dat", report.GetProperty("leftInPlace")[0].GetString());
-        Assert.IsTrue(game.Exists("Fixture Game_Data/savegame.dat"), "files we did not add are never deleted");
+        Assert.AreEqual(game.Native("Fixture Game_Data/savegame.dat"), report.GetProperty("leftInPlace")[0].GetString());
+        Assert.IsTrue(game.Exists(game.Native("Fixture Game_Data/savegame.dat")), "files we did not add are never deleted");
         Assert.IsFalse(game.Exists("BepInEx"));
     }
 
@@ -197,7 +197,7 @@ public sealed class InstallRestoreTests : SidecarTest
     {
         var game = CreateGame();
         AssertOk(Run("install", new { gamePath = game.Root }));
-        game.Write("Fixture Game_Data/level0", "patched by a game update");
+        game.Write(game.Native("Fixture Game_Data/level0"), "patched by a game update");
         File.Delete(game.Full("MonoBleedingEdge/etc/mono/config"));
 
         var restore = Run("revert", new { gamePath = game.Root, all = true });
@@ -205,12 +205,13 @@ public sealed class InstallRestoreTests : SidecarTest
         AssertOk(restore);
         var report = restore.GetProperty("data");
         Assert.IsFalse(report.GetProperty("matchesBaseline").GetBoolean());
-        Assert.AreEqual("Fixture Game_Data/level0", report.GetProperty("changedOriginals")[0].GetString());
+        Assert.AreEqual(game.Native("Fixture Game_Data/level0"), report.GetProperty("changedOriginals")[0].GetString());
         Assert.AreEqual("MonoBleedingEdge/etc/mono/config", report.GetProperty("missingOriginals")[0].GetString());
-        Assert.AreEqual("patched by a game update", File.ReadAllText(game.Full("Fixture Game_Data/level0")));
+        Assert.AreEqual("patched by a game update", File.ReadAllText(game.Full(game.Native("Fixture Game_Data/level0"))));
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows, IgnoreMessage = "Uses Windows' PING.EXE as a stand-in; RunningFakeGame_IsRefused covers every system.")]
     public void RunningGame_IsRefused()
     {
         var game = CreateGame();
@@ -235,6 +236,63 @@ public sealed class InstallRestoreTests : SidecarTest
 
         CollectionAssert.AreEqual(before.ToList(), game.Hashes().ToList());
         AssertOk(Run("install", new { gamePath = game.Root }));
+    }
+
+    [TestMethod]
+    public void RunningFakeGame_IsRefused()
+    {
+        var game = CreateGame().UseFakeGameExe();
+        var before = game.Hashes();
+        var start = new ProcessStartInfo(game.ExePath) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["SPECTUNER_FAKE_GAME"] = "hang";
+        using var process = Process.Start(start)!;
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!SpecTuner.Sidecar.Games.GameProcesses.IsRunning(game.ExePath) && DateTime.UtcNow < deadline)
+                Thread.Sleep(100);
+            AssertRefused(Run("install", new { gamePath = game.Root }), "GAME_RUNNING");
+            AssertRefused(Run("revert", new { gamePath = game.Root, all = true }), "GAME_RUNNING");
+            AssertRefused(Run("play", new { gamePath = game.Root }), "GAME_RUNNING");
+        }
+        finally
+        {
+            process.Kill();
+            process.WaitForExit();
+        }
+
+        CollectionAssert.AreEqual(before.ToList(), game.Hashes().ToList());
+        AssertOk(Run("install", new { gamePath = game.Root }));
+    }
+
+    [TestMethod]
+    [OSCondition(OperatingSystems.Linux | OperatingSystems.OSX, IgnoreMessage = "Linked folders as Linux and macOS have them: the kernel reports a running program's path behind the links.")]
+    public void RunningGame_ChosenThroughALinkedFolder_IsRefused()
+    {
+        // A game library on another drive is often reached through a link; the player picks the linked path.
+        var game = CreateGame().UseFakeGameExe();
+        var before = game.Hashes();
+        var linkedRoot = Path.Combine(TempDir, "linked library");
+        Directory.CreateSymbolicLink(linkedRoot, game.Root);
+        var linkedExe = Path.Combine(linkedRoot, Path.GetRelativePath(game.Root, game.ExePath));
+        var start = new ProcessStartInfo(game.ExePath) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        start.Environment["SPECTUNER_FAKE_GAME"] = "hang";
+        using var process = Process.Start(start)!;
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!SpecTuner.Sidecar.Games.GameProcesses.IsRunning(linkedExe) && DateTime.UtcNow < deadline)
+                Thread.Sleep(100);
+            Assert.IsTrue(SpecTuner.Sidecar.Games.GameProcesses.IsRunning(linkedExe), "the game is found through the linked path");
+            AssertRefused(Run("install", new { gamePath = linkedRoot }), "GAME_RUNNING");
+        }
+        finally
+        {
+            process.Kill();
+            process.WaitForExit();
+        }
+
+        CollectionAssert.AreEqual(before.ToList(), game.Hashes().ToList());
     }
 
     [TestMethod]
@@ -294,7 +352,7 @@ public sealed class InstallRestoreTests : SidecarTest
         var game = CreateGame();
         var original = game.Hashes();
         AssertOk(Run("install", new { gamePath = game.Root }));
-        game.Write("Fixture Game_Data/Managed/Mirror.dll", GameFixture.ManagedAssembly()); // e.g. a game update
+        game.Write(game.Native("Fixture Game_Data/Managed/Mirror.dll"), GameFixture.ManagedAssembly()); // e.g. a game update
 
         AssertRefused(Run("install", new { gamePath = game.Root }), "ONLINE_MULTIPLAYER");
         AssertOk(Run("changes", new { gamePath = game.Root }));
@@ -302,8 +360,8 @@ public sealed class InstallRestoreTests : SidecarTest
 
         AssertOk(restore);
         Assert.IsFalse(game.Exists("BepInEx"));
-        Assert.AreEqual("Fixture Game_Data/Managed/Mirror.dll", restore.GetProperty("data").GetProperty("leftInPlace")[0].GetString());
-        File.Delete(game.Full("Fixture Game_Data/Managed/Mirror.dll"));
+        Assert.AreEqual(game.Native("Fixture Game_Data/Managed/Mirror.dll"), restore.GetProperty("data").GetProperty("leftInPlace")[0].GetString());
+        File.Delete(game.Full(game.Native("Fixture Game_Data/Managed/Mirror.dll")));
         CollectionAssert.AreEqual(original.ToList(), game.Hashes().ToList());
     }
 

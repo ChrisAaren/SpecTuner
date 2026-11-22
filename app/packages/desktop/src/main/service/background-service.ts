@@ -9,6 +9,7 @@ import { BackgroundServiceMachine } from "./background-service-machine"
 import { cleanStages } from "./cli-stages"
 import { keptStages, serviceVersion, shouldRetryEnsure } from "./cli-version"
 import { DesktopCli } from "./desktop-cli"
+import { serverRegistrationFile, serverSpawnEnv } from "../spectuner"
 import { SidecarCredentials } from "./sidecar-credentials"
 import { takeSidecarProbe } from "./sidecar-probe"
 
@@ -70,6 +71,9 @@ const ensure = Effect.fn("BackgroundService.ensure")(function* (mode: Background
         "--service",
         ...(setup.isolated ? ["--hostname", "0.0.0.0", "--port", String(0x0c0c)] : []),
       ],
+      // SpecTuner: on macOS and Linux the server's XDG folders go to the service only, never into the app's own
+      // environment (spectuner/server-environment.ts). Undefined values remove a variable.
+      env: serverSpawnEnv() as Record<string, string> | undefined,
       onStart: (reason, previousVersion) =>
         runFork(Effect.logInfo("v2 CLI background service starting", { reason, previousVersion })),
     })
@@ -119,7 +123,8 @@ const prepare = Effect.fn("BackgroundService.prepare")(function* (mode: Backgrou
           "spectuner",
           "service-local.json",
         )
-      : undefined
+      : // SpecTuner: on macOS and Linux the app's own XDG_STATE_HOME is the player's, so name the server's file.
+        serverRegistrationFile()
 
   return { cli, client, file, isolated, version }
 })

@@ -14,8 +14,14 @@ public static class ErrorCodes
     public const string NotUnity = "NOT_UNITY";
     public const string Il2CppNotSupported = "IL2CPP_NOT_SUPPORTED";
     public const string NotWindowsX64 = "NOT_WINDOWS_X64";
+    /// <summary>Linux and macOS: the Windows build of a game, meant for Proton or Wine.</summary>
+    public const string CompatibilityLayerNotSupported = "COMPATIBILITY_LAYER_NOT_SUPPORTED";
+    /// <summary>Linux and macOS: a program built for a processor SpecTuner doesn't support here.</summary>
+    public const string UnsupportedArchitecture = "UNSUPPORTED_ARCHITECTURE";
     public const string AntiCheat = "ANTI_CHEAT";
     public const string ProtectedCode = "PROTECTED_CODE";
+    /// <summary>macOS: the app's signature keeps the loader out (Hardened Runtime without the needed entitlements).</summary>
+    public const string LoaderBlocked = "LOADER_BLOCKED";
     public const string OnlineMultiplayer = "ONLINE_MULTIPLAYER";
 
     // Changing the game

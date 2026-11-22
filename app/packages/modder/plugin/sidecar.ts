@@ -29,7 +29,10 @@ export const MINUTE = 60_000
 export class SidecarError extends Error {}
 
 export interface RunInput {
-  /** Absolute path of `spectuner-sidecar.exe`; usually `process.env.SPECTUNER_SIDECAR`. */
+  /**
+   * Absolute path of the sidecar (`spectuner-sidecar.exe` on Windows, `spectuner-sidecar` elsewhere); usually
+   * `process.env.SPECTUNER_SIDECAR`.
+   */
   readonly exe: string | undefined
   readonly command: string
   readonly request: Readonly<Record<string, unknown>>

@@ -16,7 +16,11 @@ public sealed class SafetyCheckTests
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
             .ToList();
         list.Add(MetadataReference.CreateFromImage(UnityStub.Assembly));
-        list.AddRange(BepInExPackage.CoreImages().Select(c => (MetadataReference)MetadataReference.CreateFromImage(c.Image)));
+        list.Add(MetadataReference.CreateFromImage(MonoStub.Assembly));
+        // As PluginCompiler.GameReferences does: 0Harmony20.dll duplicates every Harmony type, which would leave Harmony names unresolved.
+        list.AddRange(BepInExPackage.CoreImages()
+            .Where(c => !c.Name.EndsWith("/0Harmony20.dll", StringComparison.OrdinalIgnoreCase))
+            .Select(c => (MetadataReference)MetadataReference.CreateFromImage(c.Image)));
         return list;
     });
 
@@ -70,6 +74,107 @@ public sealed class SafetyCheckTests
         ["System.Timers.Timer"] = "var t = new System.Timers.Timer();",
         ["System.Threading.Tasks.Task.Run"] = "System.Threading.Tasks.Task.Run(() => { });",
         ["System.Threading.Tasks.TaskFactory.StartNew"] = "System.Threading.Tasks.Task.Factory.StartNew(() => { });",
+
+        ["MonoMod.Utils.DynDll"] = "var lib = MonoMod.Utils.DynDll.OpenLibrary(\"libc\");",
+        ["MonoMod.Utils.DynDllImportAttribute"] = "var t = typeof(MonoMod.Utils.DynDllImportAttribute);",
+        ["MonoMod.Utils.DynDllMapping"] = "var t = typeof(MonoMod.Utils.DynDllMapping);",
+        ["MonoMod.RuntimeDetour.NativeDetour"] = "var d = new MonoMod.RuntimeDetour.NativeDetour(System.IntPtr.Zero, System.IntPtr.Zero);",
+        ["MonoMod.RuntimeDetour.NativeDetourData"] = "var t = typeof(MonoMod.RuntimeDetour.NativeDetourData);",
+        ["MonoMod.RuntimeDetour.DetourHelper"] = "MonoMod.RuntimeDetour.DetourHelper.MakeWritable(System.IntPtr.Zero, 4u);",
+        ["MonoMod.RuntimeDetour.IDetourNativePlatform"] = "MonoMod.RuntimeDetour.IDetourNativePlatform p = null;",
+        ["MonoMod.RuntimeDetour.Platforms.*"] = "var p = new MonoMod.RuntimeDetour.Platforms.DetourNativeX86Platform();",
+        ["HarmonyLib.Public.Patching.NativeDetourMethodPatcher"] = "var t = typeof(HarmonyLib.Public.Patching.NativeDetourMethodPatcher);",
+        ["BepInEx.Unix.*"] = "var t = typeof(BepInEx.Unix.UnixStreamHelper.fwriteDelegate);",
+        ["System.Runtime.CompilerServices.Unsafe"] = "int x = 0; System.Runtime.CompilerServices.Unsafe.As<int, long>(ref x) = 1;",
+        ["System.Type.GetTypeFromProgID"] = "var t = System.Type.GetTypeFromProgID(\"WScript.Shell\");",
+        ["System.Type.GetTypeFromCLSID"] = "var t = System.Type.GetTypeFromCLSID(System.Guid.Empty);",
+        ["Mono.Unix.*"] = "Mono.Unix.Native.Syscall.chmod(\"x\", 511u);",
+        ["Mono.Posix.*"] = "Mono.Posix.Syscall.unlink(\"x\");",
+        ["System.Reflection.Assembly.LoadWithPartialName"] = "System.Reflection.Assembly.LoadWithPartialName(\"x\");",
+        ["MonoMod.Utils.DynamicMethodDefinition"] = "var d = new MonoMod.Utils.DynamicMethodDefinition(\"x\", typeof(void), new System.Type[0]);",
+        ["MonoMod.Utils.DMDGenerator"] = "var t = typeof(MonoMod.Utils.DMDGenerator<MonoMod.Utils.DMDEmitDynamicMethodGenerator>);",
+        ["MonoMod.Utils.DMDEmitDynamicMethodGenerator"] = "var g = new MonoMod.Utils.DMDEmitDynamicMethodGenerator();",
+        ["MonoMod.Utils.DMDEmitMethodBuilderGenerator"] = "var g = new MonoMod.Utils.DMDEmitMethodBuilderGenerator();",
+        ["MonoMod.Utils.DMDCecilGenerator"] = "var g = new MonoMod.Utils.DMDCecilGenerator();",
+        ["MonoMod.Utils.Cil.*"] = "var t = typeof(MonoMod.Utils.Cil.ILGeneratorShim);",
+        ["MonoMod.Utils.ReflectionHelper.Load"] = "MonoMod.Utils.ReflectionHelper.Load((Mono.Cecil.ModuleDefinition)null);",
+        ["Mono.CSharp.*"] = "new Mono.CSharp.Evaluator().Run(\"1\");",
+        ["BepInEx.Preloader.*"] = "var t = typeof(BepInEx.Preloader.Patching.AssemblyPatcher);",
+        ["BepInEx.Bootstrap.TypeLoader"] = "var t = typeof(BepInEx.Bootstrap.TypeLoader);",
+        ["BepInEx.Bootstrap.Chainloader.Initialize"] = "BepInEx.Bootstrap.Chainloader.Initialize(\"x\", true, null);",
+        ["BepInEx.Bootstrap.Chainloader.Start"] = "BepInEx.Bootstrap.Chainloader.Start();",
+        ["BepInEx.Utility.TryResolveDllAssembly"] = "System.Reflection.Assembly a; BepInEx.Utility.TryResolveDllAssembly(new System.Reflection.AssemblyName(\"x\"), \"dir\", out a);",
+        ["HarmonyXInterop.*"] = "var t = typeof(HarmonyXInterop.HarmonyInterop);",
+        ["System.Xml.Xsl.*"] = "var x = new System.Xml.Xsl.XslCompiledTransform();",
+        ["System.IO.Compression.ZipFile"] = "System.IO.Compression.ZipFile.ExtractToDirectory(\"a.zip\", \"dir\");",
+        ["System.IO.Compression.ZipFileExtensions"] = "System.IO.Compression.ZipFileExtensions.ExtractToDirectory(null, \"dir\");",
+        ["System.IO.Pipes.*"] = "var p = new System.IO.Pipes.NamedPipeClientStream(\"x\");",
+        ["System.IO.MemoryMappedFiles.*"] = "var m = System.IO.MemoryMappedFiles.MemoryMappedFile.CreateFromFile(\"x\");",
+        ["System.IO.IsolatedStorage.*"] = "var s = System.IO.IsolatedStorage.IsolatedStorageFile.GetUserStoreForAssembly();",
+        ["System.IO.Ports.*"] = "var s = new System.IO.Ports.SerialPort(\"COM1\");",
+        ["System.Xml.XmlDocument.Load"] = "new System.Xml.XmlDocument().Load(\"x.xml\");",
+        ["System.Xml.XmlDocument.Save"] = "new System.Xml.XmlDocument().Save(\"x.xml\");",
+        ["System.Xml.XmlReader.Create"] = "var r = System.Xml.XmlReader.Create(\"x.xml\");",
+        ["System.Xml.XmlWriter.Create"] = "var w = System.Xml.XmlWriter.Create(\"x.xml\");",
+        ["System.Xml.XmlTextReader"] = "var r = new System.Xml.XmlTextReader(\"x.xml\");",
+        ["System.Xml.XmlTextWriter"] = "var w = new System.Xml.XmlTextWriter(\"x.xml\", null);",
+        ["System.Xml.XmlUrlResolver"] = "var r = new System.Xml.XmlUrlResolver();",
+        ["System.Xml.Linq.XDocument.Load"] = "var d = System.Xml.Linq.XDocument.Load(\"x.xml\");",
+        ["System.Xml.Linq.XDocument.Save"] = "new System.Xml.Linq.XDocument().Save(\"x.xml\");",
+        ["System.Xml.Linq.XElement.Load"] = "var e = System.Xml.Linq.XElement.Load(\"x.xml\");",
+        ["System.Xml.Linq.XElement.Save"] = "new System.Xml.Linq.XElement(\"a\").Save(\"x.xml\");",
+        ["System.Resources.ResourceReader"] = "var r = new System.Resources.ResourceReader(\"x.resources\");",
+        ["System.Resources.ResourceWriter"] = "var w = new System.Resources.ResourceWriter(\"x.resources\");",
+        ["System.Resources.ResourceManager.CreateFileBasedResourceManager"] = "System.Resources.ResourceManager.CreateFileBasedResourceManager(\"x\", \"dir\", null);",
+        ["System.Diagnostics.TextWriterTraceListener"] = "var l = new System.Diagnostics.TextWriterTraceListener(\"x.log\");",
+        ["System.Diagnostics.DelimitedListTraceListener"] = "var l = new System.Diagnostics.DelimitedListTraceListener(\"x.log\");",
+        ["System.Diagnostics.XmlWriterTraceListener"] = "var l = new System.Diagnostics.XmlWriterTraceListener(\"x.log\");",
+        ["System.Diagnostics.DefaultTraceListener.LogFileName"] = "new System.Diagnostics.DefaultTraceListener().LogFileName = \"x.log\";",
+        ["Mono.Cecil.AssemblyDefinition.ReadAssembly"] = "var a = Mono.Cecil.AssemblyDefinition.ReadAssembly(\"x.dll\");",
+        ["Mono.Cecil.AssemblyDefinition.Write"] = "((Mono.Cecil.AssemblyDefinition)null).Write(\"x.dll\");",
+        ["Mono.Cecil.ModuleDefinition.ReadModule"] = "var m = Mono.Cecil.ModuleDefinition.ReadModule(\"x.dll\");",
+        ["Mono.Cecil.ModuleDefinition.Write"] = "((Mono.Cecil.ModuleDefinition)null).Write(\"x.dll\");",
+        ["Mono.Cecil.DefaultAssemblyResolver"] = "var r = new Mono.Cecil.DefaultAssemblyResolver();",
+        ["Mono.Cecil.BaseAssemblyResolver"] = "var t = typeof(Mono.Cecil.BaseAssemblyResolver);",
+        ["Mono.Cecil.Cil.DefaultSymbolReaderProvider"] = "var p = new Mono.Cecil.Cil.DefaultSymbolReaderProvider();",
+        ["Mono.Cecil.Cil.DefaultSymbolWriterProvider"] = "var p = new Mono.Cecil.Cil.DefaultSymbolWriterProvider();",
+        ["Mono.Cecil.Cil.PortablePdbReaderProvider"] = "var p = new Mono.Cecil.Cil.PortablePdbReaderProvider();",
+        ["Mono.Cecil.Cil.PortablePdbWriterProvider"] = "var p = new Mono.Cecil.Cil.PortablePdbWriterProvider();",
+        ["Mono.Cecil.Pdb.*"] = "var p = new Mono.Cecil.Pdb.PdbReaderProvider();",
+        ["Mono.Cecil.Mdb.*"] = "var p = new Mono.Cecil.Mdb.MdbReaderProvider();",
+        ["Mono.Data.Sqlite.*"] = "var c = new Mono.Data.Sqlite.SqliteConnection(\"Data Source=x.db\");",
+        ["HarmonyLib.FileLog"] = "HarmonyLib.FileLog.Log(\"x\");",
+        ["HarmonyLib.Tools.HarmonyFileLog"] = "HarmonyLib.Tools.HarmonyFileLog.Enabled = true;",
+        ["HarmonyLib.Harmony.DEBUG"] = "HarmonyLib.Harmony.DEBUG = true;",
+        ["HarmonyLib.HarmonyDebug"] = "member:[HarmonyLib.HarmonyDebug] public static void Patched() { }",
+        ["BepInEx.Configuration.ConfigFile..ctor"] = "var c = new BepInEx.Configuration.ConfigFile(\"x.cfg\", true);",
+        ["BepInEx.Logging.DiskLogListener"] = "var l = new BepInEx.Logging.DiskLogListener(\"x.log\");",
+        ["BepInEx.Utility.TryOpenFileStream"] = "System.IO.FileStream s; BepInEx.Utility.TryOpenFileStream(\"x\", System.IO.FileMode.Create, out s);",
+        ["UnityEngine.Windows.File"] = "UnityEngine.Windows.File.ReadAllBytes(\"x\");",
+        ["UnityEngine.Windows.Directory"] = "UnityEngine.Windows.Directory.CreateDirectory(\"x\");",
+        ["UnityEngine.ScreenCapture.CaptureScreenshot"] = "UnityEngine.ScreenCapture.CaptureScreenshot(\"x.png\");",
+        ["UnityEngine.Application.CaptureScreenshot"] = "UnityEngine.Application.CaptureScreenshot(\"x.png\");",
+        ["UnityEngine.AssetBundle.LoadFromFile"] = "UnityEngine.AssetBundle.LoadFromFile(\"x\");",
+        ["UnityEngine.AssetBundle.LoadFromFileAsync"] = "UnityEngine.AssetBundle.LoadFromFileAsync(\"x\");",
+        ["UnityEngine.Caching"] = "UnityEngine.Caching.ClearCache();",
+        ["UnityEngine.Profiling.Profiler.logFile"] = "UnityEngine.Profiling.Profiler.logFile = \"x\";",
+        ["System.Runtime.Remoting.*"] = "System.Runtime.Remoting.RemotingConfiguration.Configure(\"x\");",
+        ["UnityEngine.Ping"] = "var p = new UnityEngine.Ping(\"127.0.0.1\");",
+        ["UnityEngine.Network"] = "UnityEngine.Network.Disconnect();",
+        ["UnityEngine.NetworkView"] = "var t = typeof(UnityEngine.NetworkView);",
+        ["UnityEngine.MasterServer"] = "UnityEngine.MasterServer.ClearHostList();",
+        ["System.Diagnostics.Debugger.Launch"] = "System.Diagnostics.Debugger.Launch();",
+        ["UnityEngine.Diagnostics.Utils"] = "UnityEngine.Diagnostics.Utils.ForceCrash(0);",
+        ["System.Threading.Tasks.Parallel"] = "System.Threading.Tasks.Parallel.For(0, 2, i => { });",
+        ["System.Threading.Tasks.Task.Start"] = "new System.Threading.Tasks.Task(() => { }).Start();",
+        ["System.ComponentModel.BackgroundWorker"] = "var w = new System.ComponentModel.BackgroundWorker();",
+        ["BepInEx.ThreadingHelper.StartAsyncInvoke"] = "BepInEx.ThreadingHelper.Instance.StartAsyncInvoke(() => null);",
+        ["BepInEx.ThreadingExtensions.RunParallel"] = "BepInEx.ThreadingExtensions.RunParallel(new int[0], i => { });",
+        ["UnityEngine.WebCamTexture"] = "var t = typeof(UnityEngine.WebCamTexture);",
+        ["UnityEngine.Microphone"] = "var d = UnityEngine.Microphone.devices;",
+        ["UnityEngine.Windows.WebCam.*"] = "var t = typeof(UnityEngine.Windows.WebCam.PhotoCapture);",
+        ["UnityEngine.Windows.Speech.*"] = "var t = typeof(UnityEngine.Windows.Speech.DictationRecognizer);",
+        ["UnityEngine.Application.RequestUserAuthorization"] = "UnityEngine.Application.RequestUserAuthorization(1);",
     };
 
     private static List<SafetyViolation> Check(string bodyOrMember, string usings = "")
@@ -119,6 +224,33 @@ public sealed class SafetyCheckTests
         Assert.IsTrue(Check("F.Delete(\"x\");", "using F = System.IO.File;").Any(v => v.Construct == "System.IO.File.Delete"));
         Assert.IsTrue(Check("Delete(\"x\");", "using static System.IO.File;").Any(v => v.Construct == "System.IO.File.Delete"));
         Assert.IsTrue(Check("global::System.Environment.Exit(1);").Any(v => v.Construct == "System.Environment.Exit"));
+    }
+
+    [TestMethod]
+    public void HarmonyPatchingAndPluginConfig_StayAllowed()
+    {
+        var allowed = """
+            var harmony = new Harmony("test.mod");
+            harmony.PatchAll();
+            var original = AccessTools.Method(typeof(Plugin), "Awake");
+            harmony.Patch(original, prefix: new HarmonyMethod(typeof(Plugin), "Awake"));
+            var patched = Harmony.GetAllPatchedMethods();
+            harmony.UnpatchSelf();
+            var entry = Config.Bind("General", "Jump", 2f, "Jump height");
+            Config.Save();
+            var others = BepInEx.Bootstrap.Chainloader.PluginInfos;
+            var root = BepInEx.Paths.GameRootPath;
+            BepInEx.ThreadingHelper.Instance.StartSyncInvoke(() => { });
+            """;
+        var violations = Check(allowed);
+        Assert.IsEmpty(violations, string.Join("; ", violations.Select(v => v.Construct)));
+    }
+
+    [TestMethod]
+    public void ConstructorRule_AppliesToExplicitAndImplicitNew()
+    {
+        Assert.IsTrue(Check("var c = new BepInEx.Configuration.ConfigFile(\"x.cfg\", true);").Any(v => v.Construct == "BepInEx.Configuration.ConfigFile..ctor"));
+        Assert.IsTrue(Check("BepInEx.Configuration.ConfigFile c = new(\"x.cfg\", true);").Any(v => v.Construct == "BepInEx.Configuration.ConfigFile..ctor"));
     }
 
     [TestMethod]

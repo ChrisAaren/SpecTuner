@@ -20,6 +20,24 @@ export function applySpecTunerEnvironment(testRoot?: string) {
   SpecTunerServerEnvironment.apply(process.env, server)
 }
 
+/**
+ * Variables to add to the background service's environment when the desktop starts it (macOS and Linux: SpecTuner's
+ * `XDG_*` folders, which the desktop keeps out of its own environment). `undefined` on Windows.
+ */
+export function serverSpawnEnv() {
+  return server ? SpecTunerServerEnvironment.spawnEnv(process.env, server) : undefined
+}
+
+/** The service's registration file when the client cannot find it from the desktop's environment (macOS and Linux). */
+export function serverRegistrationFile() {
+  return server ? SpecTunerServerEnvironment.registrationFile(server) : undefined
+}
+
+/** The server's log folder, for exported diagnostics. */
+export function serverLogDir() {
+  return server ? path.join(SpecTunerServerEnvironment.dataDir(server), "spectuner", "log") : undefined
+}
+
 function start(testRoot: string | undefined) {
   const resolved = SpecTunerServerEnvironment.resolve(
     { packaged: app.isPackaged, resources: resources(), testRoot },
@@ -42,7 +60,8 @@ function resources() {
  * desktop settings, opens `drafts.sqlite` or looks for a service. Never throws; a test root never migrates.
  */
 export async function upgradeFromPreviousBuild() {
-  if (!server || inTestRoot) return undefined
+  // Builds with opencode's names only ever shipped for Windows, so there is nothing to carry over elsewhere.
+  if (!server || inTestRoot || !SpecTunerUpgrade.applies(process.platform)) return undefined
   const newHome = server.home
   const userData = app.getPath("userData")
   const input: SpecTunerUpgrade.Input = {

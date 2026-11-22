@@ -26,4 +26,12 @@ export default {
   "past.reapplying": "Applying again…",
   "past.mod": "Applying this again starts the game once to check it. The game window opens and closes by itself.",
   "past.truncated": "Only the newest {{count}} are shown.",
+  play: "Play",
+  "play.without": "Play without changes",
+  "play.starting": "Starting…",
+  "play.steam":
+    "To get your changes when you start the game from Steam too, paste this into Steam once: right-click the game, choose Properties, and paste it under Launch Options.",
+  "play.steam.label": "Steam launch option",
+  "play.copy": "Copy",
+  "play.copied": "Copied",
 }

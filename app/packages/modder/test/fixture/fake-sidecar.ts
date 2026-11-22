@@ -4,7 +4,7 @@
 // FAKE_SIDECAR_MODE: "hang" never answers, "garbage" prints non-JSON and exits 3, "ledger" answers a game with
 // five changes (setup, a live mod, a live setting, one undone), the mods map, a past list, and real `revert` and
 // `reapply` answers, "ledger-no-mods" the same from an older helper without the mods map, "unsupported" answers an
-// IL2CPP refusal, otherwise canned envelopes.
+// IL2CPP refusal, "play-steam" and "game-running" vary `play` (see below), otherwise canned envelopes.
 import { appendFileSync } from "node:fs"
 import path from "node:path"
 
@@ -22,6 +22,39 @@ if (mode === "garbage") {
 }
 
 const respond = (envelope: Record<string, unknown>) => console.log(JSON.stringify({ command, ...envelope }))
+
+// The game folder's last part. The tests pass Windows paths ("C:\\Games\\Fake Game") on every system, so both
+// separators count; the host's own `path.basename` would keep the whole string on Linux and macOS.
+const gameName = (gamePath: string) => path.win32.basename(gamePath)
+
+// `play` in every mode but "unsupported": "play-steam" answers as on Linux for a Steam game (a launch option and a
+// note), "game-running" refuses because the game already runs, any other mode starts the game.
+if (command === "play" && mode !== "unsupported") {
+  const withChanges = request.withChanges !== false
+  const name = mode?.startsWith("ledger") ? "Ledger Game" : gameName(request.gamePath)
+  if (mode === "game-running")
+    respond({
+      ok: false,
+      error: { code: "GAME_RUNNING", message: "The game is already running. Close it first, then try again." },
+      data: {},
+    })
+  else
+    respond({
+      ok: true,
+      summary: withChanges ? `Started ${name} with your changes.` : `Started ${name} without SpecTuner's changes.`,
+      data: {
+        started: true,
+        withChanges,
+        loaderActive: withChanges,
+        steamLaunchOption: mode === "play-steam" ? '"/games/run_bepinex.sh" %command%' : null,
+        note:
+          mode === "play-steam"
+            ? "If you start the game from Steam, Steam may start it without your changes until you set the launch option."
+            : null,
+      },
+    })
+  process.exit(0)
+}
 
 if (mode === "unsupported") {
   if (command === "detect")
@@ -187,7 +220,7 @@ if (command === "detect")
     summary: "This is a Unity game SpecTuner can work with.",
     data: {
       supported: true,
-      game: { name: path.basename(request.gamePath), exe: "Fake.exe", unityVersion: "2022.3.1f1", backend: "mono" },
+      game: { name: gameName(request.gamePath), exe: "Fake.exe", unityVersion: "2022.3.1f1", backend: "mono" },
       loader: { installed: false, ours: false, version: null },
       probe: { installed: false },
       activeChanges: 0,

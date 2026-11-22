@@ -1,14 +1,21 @@
 using System.IO.Enumeration;
+using SpecTuner.Sidecar.Platform;
 
 namespace SpecTuner.Sidecar.Games;
 
 public enum EntryKind { File, Directory }
 
-/// <summary>A file or folder name pattern (<c>*</c> and <c>?</c> wildcards, case-insensitive) and the product it means.</summary>
-public sealed record Signature(string Pattern, EntryKind Kind, string Product)
+/// <summary>
+/// A file or folder name pattern (<c>*</c> and <c>?</c> wildcards, case-insensitive) and the product it means.
+/// <paramref name="Platforms"/> limits a row to some platforms; null means every platform.
+/// </summary>
+public sealed record Signature(string Pattern, EntryKind Kind, string Product, GamePlatform[]? Platforms = null)
 {
     public bool Matches(string name, bool isDirectory) =>
         isDirectory == (Kind == EntryKind.Directory) && FileSystemName.MatchesSimpleExpression(Pattern, name, ignoreCase: true);
+
+    public bool Matches(string name, bool isDirectory, GamePlatform platform) =>
+        (Platforms is null || Platforms.Contains(platform)) && Matches(name, isDirectory);
 }
 
 /// <summary>
@@ -17,6 +24,9 @@ public sealed record Signature(string Pattern, EntryKind Kind, string Product)
 /// </summary>
 public static class Signatures
 {
+    private static readonly GamePlatform[] Linux = [GamePlatform.Linux];
+    private static readonly GamePlatform[] MacOS = [GamePlatform.MacOS];
+
     /// <summary>Matched against every file and folder name anywhere in the game folder.</summary>
     public static readonly Signature[] AntiCheat =
     [
@@ -34,6 +44,21 @@ public static class Signatures
         new("vgk.sys", EntryKind.File, "Riot Vanguard"),
         new("vgc.exe", EntryKind.File, "Riot Vanguard"),
         new("*anticheat*.dll", EntryKind.File, "anti-cheat software"),
+
+        // Linux. Easy Anti-Cheat (EOS) bootstrapper and the renamed SDK library (Epic and Valve docs).
+        new("start_protected_game", EntryKind.File, "Easy Anti-Cheat", Linux),
+        new("EasyAntiCheat*.so", EntryKind.File, "Easy Anti-Cheat", Linux),
+        // BattlEye's client library name comes from community reports, not from BattlEye.
+        new("BEClient*.so", EntryKind.File, "BattlEye", Linux),
+        new("*anticheat*.so", EntryKind.File, "anti-cheat software", Linux),
+
+        // macOS. Easy Anti-Cheat (EOS) bootstrapper apps and per-app settings file (Epic docs).
+        new("start_protected_game.app", EntryKind.Directory, "Easy Anti-Cheat", MacOS),
+        new("start_protected_game_x86-64.app", EntryKind.Directory, "Easy Anti-Cheat", MacOS),
+        new("*.app.eac", EntryKind.File, "Easy Anti-Cheat", MacOS),
+        new("EasyAntiCheat*.dylib", EntryKind.File, "Easy Anti-Cheat", MacOS),
+        new("BEClient*.dylib", EntryKind.File, "BattlEye", MacOS),
+        new("*anticheat*.dylib", EntryKind.File, "anti-cheat software", MacOS),
     ];
 
     /// <summary>

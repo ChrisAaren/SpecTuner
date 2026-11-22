@@ -6,7 +6,8 @@ namespace SpecTuner.Sidecar.State;
 public static class OurFiles
 {
     public const string BepInExDir = "BepInEx";
-    public static readonly string[] LoaderRootFiles = ["winhttp.dll", "doorstop_config.ini", ".doorstop_version"];
+    /// <summary>The loader's files at the game root (Windows: winhttp.dll, doorstop_config.ini, .doorstop_version), from the platform's loader kit.</summary>
+    public static IReadOnlyList<string> LoaderRootFiles => Platform.Platforms.Current.Loader.RootFiles;
     public const string BepInExCoreDll = "BepInEx/core/BepInEx.dll";
 
     /// <summary>Probe plugin and generated mods.</summary>

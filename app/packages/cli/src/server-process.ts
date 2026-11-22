@@ -16,6 +16,7 @@ import { ServiceConfig } from "./services/service-config"
 import { ServiceRegistration } from "./services/service-registration"
 import { WebUi } from "./services/web-ui"
 import { databasePath } from "./database-path"
+import { configOptions } from "./config-options"
 
 export type Mode = "default" | "service"
 
@@ -106,19 +107,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             file: process.env.SPECTUNER_MODELS_PATH,
             fetch: !truthy(process.env.SPECTUNER_DISABLE_MODELS_FETCH),
           },
-          config: {
-            directory: process.env.SPECTUNER_CONFIG_DIR,
-            project: !truthy(
-              process.env.SPECTUNER_CONFIG_PROJECT_DISABLE ?? process.env.SPECTUNER_DISABLE_PROJECT_CONFIG,
-            ),
-            // Config reads .claude only for skills; CLAUDE.md is gated under instructions.
-            claude: !(
-              truthy(process.env.SPECTUNER_DISABLE_CLAUDE_CODE) ||
-              truthy(process.env.SPECTUNER_DISABLE_CLAUDE_CODE_SKILLS)
-            ),
-            file: process.env.SPECTUNER_CONFIG,
-            content: process.env.SPECTUNER_CONFIG_CONTENT,
-          },
+          config: configOptions(process.env),
           instructions: {
             claude: !(
               truthy(process.env.SPECTUNER_DISABLE_CLAUDE_CODE) ||

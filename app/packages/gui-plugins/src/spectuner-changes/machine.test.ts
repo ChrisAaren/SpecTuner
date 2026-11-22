@@ -355,3 +355,106 @@ test("the same build listed twice is still one version, so it gets no label", ()
     past: [{ id: "c0007", version: undefined }],
   })
 })
+
+test("Play starts the game with the changes, disables every other action, and shows the sentence", () => {
+  const started = transitionChanges(ready(), { type: "play", withChanges: true })
+
+  expect(started.effects).toEqual([{ type: "play", attempt: 2, withChanges: true }])
+  expect(selectChangesView(started.state)).toMatchObject({ playing: "with", busy: true })
+  // Undo, restore, Apply again and a second start are ignored while it runs.
+  expect(transitionChanges(started.state, { type: "undo", changeId: "c0003" }).state).toBe(started.state)
+  expect(transitionChanges(started.state, { type: "restore" }).state).toBe(started.state)
+  expect(transitionChanges(started.state, { type: "reapply", changeId: "c0006" }).state).toBe(started.state)
+  expect(transitionChanges(started.state, { type: "play", withChanges: false }).state).toBe(started.state)
+
+  const done = transitionChanges(started.state, {
+    type: "action.done",
+    attempt: 2,
+    result: { ok: true, message: "Started Sample Game with your changes.", steamLaunchOption: null, note: null },
+  })
+
+  expect(done.effects).toEqual([{ type: "fetch", attempt: 3 }])
+  const view = selectChangesView(done.state)
+  expect(view).toMatchObject({ playing: undefined, busy: false })
+  // No note and no launch option: the notice is the sentence alone.
+  expect(view.phase === "ready" && view.notice).toEqual({ ok: true, message: "Started Sample Game with your changes." })
+})
+
+test("Play without changes is its own start, and an undo cannot run beside it", () => {
+  const started = transitionChanges(ready(), { type: "play", withChanges: false })
+
+  expect(started.effects).toEqual([{ type: "play", attempt: 2, withChanges: false }])
+  expect(selectChangesView(started.state)).toMatchObject({ playing: "without", busy: true, undoing: undefined })
+})
+
+test("a start on Linux or macOS from a Steam game shows the note and the launch option to paste", () => {
+  const started = transitionChanges(ready(), { type: "play", withChanges: true }).state
+  const done = transitionChanges(started, {
+    type: "action.done",
+    attempt: 2,
+    result: {
+      ok: true,
+      message: "Started Sample Game with your changes.",
+      steamLaunchOption: '"/games/run_bepinex.sh" %command%',
+      note: "Steam may start the game without your changes.",
+    },
+  })
+
+  expect(selectChangesView(done.state)).toMatchObject({
+    notice: {
+      ok: true,
+      message: "Started Sample Game with your changes.",
+      note: "Steam may start the game without your changes.",
+      steamLaunchOption: '"/games/run_bepinex.sh" %command%',
+    },
+  })
+})
+
+test("a refused start shows the plain message and frees the buttons", () => {
+  const started = transitionChanges(ready(), { type: "play", withChanges: true }).state
+  const refused = transitionChanges(started, {
+    type: "action.done",
+    attempt: 2,
+    result: { ok: false, message: "The game is already running.", steamLaunchOption: null, note: null },
+  })
+
+  expect(selectChangesView(refused.state)).toMatchObject({
+    busy: false,
+    playing: undefined,
+    notice: { ok: false, message: "The game is already running." },
+  })
+
+  const lost = transitionChanges(transitionChanges(refused.state, { type: "play", withChanges: true }).state, {
+    type: "action.failed",
+    attempt: 4,
+    message: "server unavailable",
+  })
+
+  expect(selectChangesView(lost.state)).toMatchObject({
+    busy: false,
+    notice: { ok: false, message: "server unavailable" },
+  })
+})
+
+test("Play is offered when SpecTuner can work with the game; without changes only when something is in place", () => {
+  expect(selectChangesView(ready())).toMatchObject({ canPlay: true, canPlayWithout: true })
+
+  const untouched = { ...status, changes: [], canRestore: false }
+  expect(selectChangesView(replay({ type: "loaded", attempt: 1, status: untouched }).state)).toMatchObject({
+    canPlay: true,
+    canPlayWithout: false,
+  })
+
+  // SpecTuner's setup alone is something to compare against.
+  const setupOnly = { ...status, changes: [change("c0002", "probe"), change("c0001", "loader")] }
+  expect(selectChangesView(replay({ type: "loaded", attempt: 1, status: setupOnly }).state)).toMatchObject({
+    canPlay: true,
+    canPlayWithout: true,
+  })
+
+  const declined = { ...status, supported: false, message: "Online games are not supported." }
+  expect(selectChangesView(replay({ type: "loaded", attempt: 1, status: declined }).state)).toMatchObject({
+    canPlay: false,
+    canPlayWithout: false,
+  })
+})

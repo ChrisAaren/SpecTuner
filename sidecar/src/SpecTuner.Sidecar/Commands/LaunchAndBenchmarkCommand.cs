@@ -39,7 +39,7 @@ public sealed class LaunchAndBenchmarkCommand : ICommand
         var (mods, pluginErrors) = GameRun.ModReport(game, plugins, logLines, GameRun.ReadThisRunsPlayerLog(facts, startedAt));
 
         if (outcome.Result is not { } result)
-            return Failed(game, history, runId, label, outcome, logErrors, pluginErrors);
+            return Failed(game, history, runId, label, outcome, logErrors, pluginErrors, logLines.Count > 0);
 
         var frameMs = result.GetProperty("frameMs");
         var run = new BenchmarkRun
@@ -165,11 +165,11 @@ public sealed class LaunchAndBenchmarkCommand : ICommand
     }
 
     private static CommandResult Failed(InstalledGame game, BenchmarkHistory history, string runId, string label, LaunchOutcome outcome, List<string> logErrors,
-        Dictionary<string, List<string>> pluginErrors)
+        Dictionary<string, List<string>> pluginErrors, bool loaderLogWritten)
     {
         history.Runs.Add(new BenchmarkRun { RunId = runId, Label = label, At = DateTime.UtcNow, Ok = false, Failure = outcome.Failure });
         history.Save(game.State);
-        return GameRun.FailedStart(game, runId, outcome, logErrors, pluginErrors);
+        return GameRun.FailedStart(game, runId, outcome, logErrors, pluginErrors, loaderLogWritten);
     }
 
     private static double Round(double value) => Math.Round(value, 2);

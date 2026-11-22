@@ -157,6 +157,7 @@ function makeRoutes<AuthError, AuthServices>(
       Config.configured({
         project: options.config?.project,
         claude: options.config?.claude,
+        ...(options.config?.system === undefined ? {} : { system: options.config.system }),
         file: options.config?.file,
         content: options.config?.content,
       }),

@@ -3,6 +3,7 @@ import path from "node:path"
 import { app } from "electron"
 import type { Endpoint } from "@spectuner/client/service"
 import { CHANNEL } from "../constants"
+import { serverRegistrationFile } from "../spectuner"
 
 // The main thread idles between showing the first window and evaluating the main bundle, waiting
 // for the renderer's asset requests. That slot is long enough to find out whether a compatible
@@ -16,7 +17,11 @@ export function startSidecarProbe() {
   const version = CHANNEL === "beta" ? undefined : bundledVersion()
 
   if (version === "") return
-  probe = import("@spectuner/client/service").then(({ Service }) => Service.discover({ version })).catch(() => undefined)
+  // SpecTuner: on macOS and Linux the registration file is named explicitly (spectuner/server-environment.ts).
+  const file = serverRegistrationFile()
+  probe = import("@spectuner/client/service")
+    .then(({ Service }) => Service.discover({ version, ...(file ? { file } : {}) }))
+    .catch(() => undefined)
 }
 
 /** The probe's result, once: a later connect must not adopt a service that may have exited since boot. */

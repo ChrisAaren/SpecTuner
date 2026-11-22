@@ -104,8 +104,10 @@ public static class GameRun
     /// game last started (a full restore if the loader itself was never verified) and say so plainly.
     /// </summary>
     public static CommandResult FailedStart(InstalledGame game, string runId, LaunchOutcome outcome, List<string> logErrors,
-        Dictionary<string, List<string>> pluginErrors)
+        Dictionary<string, List<string>> pluginErrors, bool loaderLogWritten = true)
     {
+        // Linux/macOS: no BepInEx log from this run means the loader never got into the game. Windows keeps its messages.
+        var loaderNote = !loaderLogWritten && outcome.Failure != "start-failed" ? Platform.Platforms.Current.Loader.LoaderDidNotStartNote : null;
         var unverified = game.Ledger.Live.Where(e => !e.Verified).Select(e => new { id = e.Id, kind = e.Kind, title = e.Title }).ToList();
         var fullRestore = unverified.Any(e => e.kind == ChangeKinds.Loader);
         if (unverified.Count > 0)
@@ -123,6 +125,8 @@ public static class GameRun
             : fullRestore
                 ? $"{what}. SpecTuner removed everything it had added, so your game is back the way it was."
                 : $"{what}. SpecTuner undid the changes made since the game last worked: {string.Join(", ", unverified.Select(e => e.title))}.";
+        if (loaderNote is not null)
+            message += " " + loaderNote;
 
         return CommandResult.Failure(ErrorCodes.GameFailedToStart, message,
             $"failure={outcome.Failure}; exitCode={outcome.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "none"}",
@@ -136,6 +140,7 @@ public static class GameRun
                 logErrors,
                 pluginErrors,
                 durationSeconds = Math.Round(outcome.DurationSeconds, 1),
+                loaderStarted = loaderLogWritten,
             });
     }
 }

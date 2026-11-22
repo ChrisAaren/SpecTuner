@@ -7,14 +7,18 @@ namespace SpecTuner.Sidecar.Games;
 public sealed class GameFacts
 {
     public string? Name { get; set; }
+    /// <summary>The game's program as the player sees it: <c>Game.exe</c>, <c>Game.x86_64</c>, <c>Game.app</c>.</summary>
     public string? Exe { get; set; }
     public string? UnityVersion { get; set; }
     public string? Backend { get; set; }
     public string? Arch { get; set; }
     public string? Company { get; set; }
     public string? Product { get; set; }
+    /// <summary>"windows", "linux" or "macos": the profile the folder was inspected with.</summary>
+    public string? Platform { get; set; }
 
     [JsonIgnore] public string FullPath { get; set; } = "";
+    /// <summary>The program file that is started (on macOS the one inside <c>Contents/MacOS</c>).</summary>
     [JsonIgnore] public string? ExePath { get; set; }
     [JsonIgnore] public string? DataDir { get; set; }
     [JsonIgnore] public string? ManagedDir => DataDir is null ? null : Path.Combine(DataDir, "Managed");

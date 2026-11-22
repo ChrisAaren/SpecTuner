@@ -20,22 +20,32 @@ public sealed class Baseline
     public List<string> Directories { get; set; } = [];
     public List<BaselineFile> Files { get; set; } = [];
 
+    /// <summary>True when the game folder's file system tells names apart by case (Linux, case-sensitive macOS volumes). Absent (false) on Windows.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CaseSensitive { get; set; }
+
+    /// <summary>How relative paths in this game folder are compared.</summary>
+    [JsonIgnore]
+    public StringComparer Comparer => CaseSensitive ? StringComparer.Ordinal : GameTree.PathComparer;
+
     private Dictionary<string, BaselineFile>? _byPath;
     private HashSet<string>? _directories;
 
     [JsonIgnore]
     public IReadOnlyDictionary<string, BaselineFile> ByPath =>
-        _byPath ??= Files.ToDictionary(f => f.Path, GameTree.PathComparer);
+        _byPath ??= Files.ToDictionary(f => f.Path, Comparer);
 
     public bool Contains(string relativePath) => ByPath.ContainsKey(relativePath);
 
     public bool ContainsDirectory(string relativePath) =>
-        (_directories ??= new HashSet<string>(Directories, GameTree.PathComparer)).Contains(relativePath);
+        (_directories ??= new HashSet<string>(Directories, Comparer)).Contains(relativePath);
 
     public bool AnyUnder(string relativeDirectory) =>
         ContainsDirectory(relativeDirectory) || Files.Any(f => GameTree.IsUnder(f.Path, relativeDirectory));
 
-    public static Baseline Capture(string root)
+    public static Baseline Capture(string root) => Capture(root, caseSensitive: false);
+
+    public static Baseline Capture(string root, bool caseSensitive)
     {
         var entries = GameTree.Entries(root).ToList();
         var files = entries.Where(e => !e.IsDirectory).Select(e => e.Relative).ToArray();
@@ -58,6 +68,7 @@ public sealed class Baseline
         {
             CreatedAt = DateTime.UtcNow,
             GamePath = root,
+            CaseSensitive = caseSensitive,
             FileCount = results.Length,
             TotalBytes = results.Sum(f => f.Size),
             Directories = entries.Where(e => e.IsDirectory).Select(e => e.Relative)

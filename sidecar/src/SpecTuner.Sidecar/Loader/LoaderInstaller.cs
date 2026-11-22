@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using SpecTuner.Sidecar.Cli;
+using SpecTuner.Sidecar.Platform;
 using SpecTuner.Sidecar.State;
 
 namespace SpecTuner.Sidecar.Loader;
@@ -72,7 +73,7 @@ public static class LoaderInstaller
                 "This game already has a newer BepInEx (version 6) that SpecTuner doesn't support yet. Nothing was changed.",
                 "Found BepInEx/core/BepInEx.Core.dll.");
 
-        var conflicts = OurFiles.LoaderRootFiles.Append(OurFiles.BepInExCoreDll)
+        var conflicts = Platforms.Current.Loader.ConflictFiles.Append(OurFiles.BepInExCoreDll)
             .Where(f => baseline.Contains(f) || File.Exists(GameTree.Full(root, f)))
             .ToList();
         if (baseline.AnyUnder(OurFiles.BepInExDir))
@@ -186,6 +187,7 @@ public static class LoaderInstaller
     private static void Extract(ZipArchive archive, string root, IReadOnlyCollection<string> files)
     {
         var wanted = new HashSet<string>(files, GameTree.PathComparer);
+        var executable = new HashSet<string>(Platforms.Current.Loader.ExecutableFiles, StringComparer.Ordinal);
         foreach (var entry in archive.Entries)
         {
             var relative = entry.FullName.Replace('\\', '/');
@@ -194,6 +196,9 @@ public static class LoaderInstaller
             var target = GameTree.Full(root, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             entry.ExtractToFile(target, overwrite: true);
+            // The zips are made on Windows and carry no Unix modes: run_bepinex.sh needs its execute bit.
+            if (executable.Contains(relative))
+                HostFiles.MakeExecutable(target);
         }
     }
 }

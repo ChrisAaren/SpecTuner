@@ -1,6 +1,7 @@
 // Starts a SpecTuner server for development:
-//   bun run script/serve.ts --port 4096 [--home DIR] [--exe path\to\spectuner.exe] [--sidecar path\to\spectuner-sidecar.exe]
-// Without --exe the CLI runs from source. Without --home the server uses %LOCALAPPDATA%\SpecTuner\app.
+//   bun run script/serve.ts --port 4096 [--home DIR] [--exe SERVER-PROGRAM] [--sidecar SIDECAR-PROGRAM]
+// Without --exe the CLI runs from source. Without --home the server uses the app's real home, `app` in SpecTuner's
+// folder (%LOCALAPPDATA%\SpecTuner on Windows; see SpecTunerEnv.folder). Without --sidecar it uses the published one.
 // Prints the URL and password, then runs until Ctrl+C.
 import path from "node:path"
 import { parseArgs } from "node:util"

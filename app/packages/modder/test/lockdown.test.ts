@@ -235,7 +235,7 @@ describe("SpecTuner server lock-down", () => {
     expect(existsSync(state.mcpStarts)).toBe(false)
   }, 30_000)
 
-  test("the Changes panel RPC answers status, undo, restore and Apply again through the helper", async () => {
+  test("the Changes panel RPC answers status, undo, restore, Apply again and Play through the helper", async () => {
     const before = (await calls(state.log)).length
     const status = await rpc("spectuner.changes", "status", {})
     expect(status.output).toMatchObject({ game: "Lockdown Game", supported: true, changes: [] })
@@ -243,6 +243,7 @@ describe("SpecTuner server lock-down", () => {
       ["undo", { changeId: "c0003" }],
       ["restore", {}],
       ["reapply", { changeId: "c0004" }],
+      ["play", { withChanges: false }],
     ] as const) {
       const result = await rpc("spectuner.changes", method, input)
       expect(typeof result.output.ok).toBe("boolean")
@@ -251,13 +252,14 @@ describe("SpecTuner server lock-down", () => {
     expect(
       (await calls(state.log))
         .slice(before)
-        .map((call) => [call.command, call.request.changeId ?? call.request.all ?? null]),
+        .map((call) => [call.command, call.request.changeId ?? call.request.all ?? call.request.withChanges ?? null]),
     ).toEqual([
       ["detect", null],
       ["changes", null],
       ["revert", "c0003"],
       ["revert", true],
       ["reapply", "c0004"],
+      ["play", false],
     ])
   }, 60_000)
 

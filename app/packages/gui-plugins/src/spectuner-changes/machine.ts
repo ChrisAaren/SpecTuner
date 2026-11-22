@@ -1,7 +1,7 @@
 import type { SpecTunerRpc } from "@spectuner/modder/rpc"
 
-// The Changes panel's lifecycle for one session's game: reading the game's status, and one undo, restore or
-// "Apply again" at a time. Reads and actions carry attempt ids so a late answer never overwrites a newer one.
+// The Changes panel's lifecycle for one session's game: reading the game's status, and one undo, restore, "Apply again"
+// or "Play" at a time. Reads and actions carry attempt ids so a late answer never overwrites a newer one.
 
 export type ChangesLoad =
   | { readonly type: "loading"; readonly attempt: number; readonly failures: number }
@@ -13,9 +13,17 @@ export type ChangesAction =
   | { readonly type: "undoing"; readonly attempt: number; readonly changeId: string }
   | { readonly type: "restoring"; readonly attempt: number }
   | { readonly type: "reapplying"; readonly attempt: number; readonly changeId: string }
+  | { readonly type: "playing"; readonly attempt: number; readonly withChanges: boolean }
 
 /** The last action's outcome: the sidecar's sentence, or its plain refusal. */
-export type ChangesNotice = { readonly ok: boolean; readonly message: string }
+export type ChangesNotice = {
+  readonly ok: boolean
+  readonly message: string
+  /** After "Play": one more plain sentence from the sidecar the player should read. */
+  readonly note?: string
+  /** After "Play" on a Steam game on Linux or macOS: the text to paste into the game's launch options in Steam. */
+  readonly steamLaunchOption?: string
+}
 
 export interface ChangesState {
   readonly load: ChangesLoad
@@ -38,8 +46,13 @@ export type ChangesEvent =
   | { readonly type: "undo"; readonly changeId: string }
   | { readonly type: "restore" }
   | { readonly type: "reapply"; readonly changeId: string }
+  | { readonly type: "play"; readonly withChanges: boolean }
   | { readonly type: "past.toggle" }
-  | { readonly type: "action.done"; readonly attempt: number; readonly result: SpecTunerRpc.Result }
+  | {
+      readonly type: "action.done"
+      readonly attempt: number
+      readonly result: SpecTunerRpc.Result | SpecTunerRpc.PlayResult
+    }
   | { readonly type: "action.failed"; readonly attempt: number; readonly message: string }
   | { readonly type: "notice.dismiss" }
 
@@ -49,6 +62,7 @@ export type ChangesEffect =
   | { readonly type: "undo"; readonly attempt: number; readonly changeId: string }
   | { readonly type: "restore"; readonly attempt: number }
   | { readonly type: "reapply"; readonly attempt: number; readonly changeId: string }
+  | { readonly type: "play"; readonly attempt: number; readonly withChanges: boolean }
 
 export interface ChangesTransition {
   readonly state: ChangesState
@@ -119,7 +133,7 @@ export function transitionChanges(state: ChangesState, event: ChangesEvent): Cha
 
   if (event.type === "past.toggle") return { state: { ...state, pastOpen: !state.pastOpen }, effects: NONE }
 
-  if (event.type === "undo" || event.type === "restore" || event.type === "reapply") {
+  if (event.type === "undo" || event.type === "restore" || event.type === "reapply" || event.type === "play") {
     // One action at a time: the sidecar would refuse a second one as busy anyway.
     if (state.action.type !== "idle") return { state, effects: NONE }
 
@@ -130,14 +144,18 @@ export function transitionChanges(state: ChangesState, event: ChangesEvent): Cha
         ? { type: "undoing", attempt, changeId: event.changeId }
         : event.type === "reapply"
           ? { type: "reapplying", attempt, changeId: event.changeId }
-          : { type: "restoring", attempt }
+          : event.type === "play"
+            ? { type: "playing", attempt, withChanges: event.withChanges }
+            : { type: "restoring", attempt }
 
     const effect: ChangesEffect =
       event.type === "undo"
         ? { type: "undo", attempt, changeId: event.changeId }
         : event.type === "reapply"
           ? { type: "reapply", attempt, changeId: event.changeId }
-          : { type: "restore", attempt }
+          : event.type === "play"
+            ? { type: "play", attempt, withChanges: event.withChanges }
+            : { type: "restore", attempt }
 
     return { state: { ...state, action, notice: undefined, attempts: attempt }, effects: [effect] }
   }
@@ -145,7 +163,7 @@ export function transitionChanges(state: ChangesState, event: ChangesEvent): Cha
   if (event.type === "action.done" || event.type === "action.failed") {
     if (state.action.type === "idle" || state.action.attempt !== event.attempt) return { state, effects: NONE }
 
-    const notice = event.type === "action.done" ? event.result : { ok: false, message: event.message }
+    const notice = event.type === "action.done" ? toNotice(event.result) : { ok: false, message: event.message }
 
     return fetch({ ...state, action: { type: "idle" }, notice })
   }
@@ -153,6 +171,20 @@ export function transitionChanges(state: ChangesState, event: ChangesEvent): Cha
   if (!state.notice) return { state, effects: NONE }
 
   return { state: { ...state, notice: undefined }, effects: NONE }
+}
+
+/** An action's result as the notice shows it; "Play" may add a note and a Steam launch option. */
+function toNotice(result: SpecTunerRpc.Result | SpecTunerRpc.PlayResult): ChangesNotice {
+  const note = "note" in result && result.note ? result.note : undefined
+  const steamLaunchOption =
+    "steamLaunchOption" in result && result.steamLaunchOption ? result.steamLaunchOption : undefined
+
+  return {
+    ok: result.ok,
+    message: result.message,
+    ...(note ? { note } : {}),
+    ...(steamLaunchOption ? { steamLaunchOption } : {}),
+  }
 }
 
 /** A new read; the list on screen stays until its answer arrives. */
@@ -201,6 +233,12 @@ export type ChangesView =
       readonly pastOpen: boolean
       /** The past change being put back, else undefined. */
       readonly reapplying: string | undefined
+      /** Whether "Play" is offered: SpecTuner can work with this game. */
+      readonly canPlay: boolean
+      /** Whether "Play without changes" is offered: a change or SpecTuner's setup is in place to compare against. */
+      readonly canPlayWithout: boolean
+      /** The start in flight: "with" or "without" the changes, else undefined. */
+      readonly playing: "with" | "without" | undefined
       readonly busy: boolean
       readonly notice: ChangesNotice | undefined
     }
@@ -238,6 +276,9 @@ export function selectChangesView(state: ChangesState): ChangesView {
     pastTruncated: status.pastTruncated,
     pastOpen: state.pastOpen ?? false,
     reapplying: state.action.type === "reapplying" ? state.action.changeId : undefined,
+    canPlay: status.supported,
+    canPlayWithout: status.supported && status.changes.length > 0,
+    playing: state.action.type === "playing" ? (state.action.withChanges ? "with" : "without") : undefined,
     busy: state.action.type !== "idle",
     notice: state.notice,
   }

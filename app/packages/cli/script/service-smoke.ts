@@ -9,9 +9,12 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
+// bun run script/service-smoke.ts [SERVER-PROGRAM]   (default: this system's build in dist/)
 const target = `cli-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`
-const directory = path.join(import.meta.dir, "..", "dist", target, "bin")
-const binary = path.join(directory, `spectuner${process.platform === "win32" ? ".exe" : ""}`)
+const binary = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.join(import.meta.dir, "..", "dist", target, "bin", `spectuner${process.platform === "win32" ? ".exe" : ""}`)
+const directory = path.dirname(binary)
 if (!(await Bun.file(binary).exists())) throw new Error(`Missing compiled CLI in ${directory}`)
 
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "spectuner-service-smoke-")))

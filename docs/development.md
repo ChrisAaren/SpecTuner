@@ -9,6 +9,7 @@ work together and gives recipes for common changes.
 - [How a request flows](#how-a-request-flows)
 - [How the lock-down works](#how-the-lock-down-works)
 - [Where state lives on disk](#where-state-lives-on-disk)
+- [Linux and macOS](#linux-and-macos)
 - [How to make common changes](#how-to-make-common-changes)
 - [Known gaps and good first tasks](#known-gaps-and-good-first-tasks)
 
@@ -35,8 +36,8 @@ work together and gives recipes for common changes.
    refresh.
 
 The Changes panel does not go through the model. It calls the plugin's RPC
-(`status`, `undo`, `restore`, `reapply`), which runs the sidecar's `detect`,
-`changes`, `revert` and `reapply` directly.
+(`status`, `undo`, `restore`, `reapply`, `play`), which runs the sidecar's
+`detect`, `changes`, `revert`, `reapply` and `play` directly.
 
 ## How the lock-down works
 
@@ -79,12 +80,43 @@ tool reachable; together they leave exactly the ten game tools.
 | Server data, config, cache and state (database `spectuner.db`, saved credentials, provider settings) | `%LOCALAPPDATA%\SpecTuner\app\` (`app-dev\` for an unpackaged run) |
 | Window settings and saved window state | `%APPDATA%\com.spectuner.desktop\` (`com.spectuner.desktop.dev\` unpackaged) |
 | Sidecar state per game: baseline manifest, change ledger, history, snapshots, mod sources, decompile cache, benchmark history | `%LOCALAPPDATA%\SpecTuner\games\<id>\`. `SPECTUNER_HOME` overrides `%LOCALAPPDATA%\SpecTuner`. Files are listed in the contract, section "State" |
-| Unity's own log, read for mod errors | `Player.log` under `%USERPROFILE%\AppData\LocalLow\<company>\<product>\` (written by the game, never by SpecTuner) |
+| Unity's own log, read for mod errors | `Player.log` under `%USERPROFILE%\AppData\LocalLow\<company>\<product>\` (written by the game, never by SpecTuner). Linux: `~/.config/unity3d/<company>/<product>/`; macOS: `~/Library/Logs/<company>/<product>/`, both from Unity's manual and not yet seen on a real game |
 
-Inside a game folder the sidecar writes only these:
+The paths above are Windows. SpecTuner keeps one folder in each system's usual
+place, and the server's home and the sidecar's state are inside it:
 
-- the BepInEx loader: `BepInEx/`, `winhttp.dll`, `doorstop_config.ini`,
-  `.doorstop_version`;
+| System | SpecTuner's folder (`SPECTUNER_HOME`) | Window settings (Electron's userData) |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\SpecTuner` | `%APPDATA%\com.spectuner.desktop` |
+| macOS | `~/Library/Application Support/SpecTuner` | `~/Library/Application Support/com.spectuner.desktop` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/SpecTuner` | `${XDG_CONFIG_HOME:-~/.config}/com.spectuner.desktop` |
+
+`SpecTunerEnv.folder` in `app/packages/modder/src/env.ts` decides the folder,
+and `SpecTunerEnv.make` always passes it to the server, and through it to the
+sidecar, as `SPECTUNER_HOME`, so the two always agree. The sidecar falls back
+to the same folders when it runs on its own. Development and packaged runs
+share the sidecar's game state; the server's home is `app` or `app-dev`.
+
+On macOS and Linux the desktop leaves its own `XDG_*` variables alone, because
+the system reads them in the app (opening links in the browser, file dialogs).
+It passes SpecTuner's `XDG_*` folders only to the server process it starts,
+and finds the server's registration file by name
+(`src/main/spectuner/server-environment.ts`, `spawnEnv` and
+`registrationFile`). On Windows it works as before: the folders are set in the
+app's own environment, which the server inherits.
+
+The per-game id hashes the full game path, lower-cased on Windows and macOS
+and as it is on Linux; on macOS the path is the folder that holds the `.app`.
+On Linux and macOS a measured run also leaves `running.json` in the game's
+state folder while it lasts (see "Starting a game" below).
+
+Inside a game folder (on macOS, the folder that holds the `.app`, never the
+app itself) the sidecar writes only these:
+
+- the BepInEx loader: `BepInEx/` and the system's loader files at the root.
+  Windows `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version`; Linux
+  `libdoorstop.so`, `run_bepinex.sh`, `.doorstop_version`; macOS
+  `libdoorstop.dylib`, `run_bepinex.sh`, `.doorstop_version`;
 - `BepInEx/plugins/SpecTuner/` (probe plugin and generated mods);
 - `BepInEx/config/spectuner.*.json` (quality overrides, one-shot benchmark
   request);
@@ -93,6 +125,133 @@ Inside a game folder the sidecar writes only these:
   for Unity 6000 and later.
 
 "Restore game" removes all of it.
+
+## Linux and macOS
+
+SpecTuner works with native Unity Mono games of the system it runs on:
+Windows x64, Linux x64, and macOS on Apple Silicon (the sidecar also accepts
+Intel Macs for games with an x86_64 build, but no Intel Mac app is built).
+The contract's "Platforms" section is the reference; this section explains
+how the code is arranged and what is still unproven.
+
+**State of the work.** Everything below is written and covered by automated
+tests. None of it has run on a real Linux PC or Mac with a real game. Treat
+each Linux or macOS behaviour as unproven until a tester reports it (see
+"What is unproven" below).
+
+### Platform differences live in one place
+
+Everything that differs per system is in
+`sidecar/src/SpecTuner.Sidecar/Platform/`, behind one `PlatformProfile`:
+
+| Part | What it decides |
+|---|---|
+| `IGameLayout` (`WindowsLayout`, `LinuxLayout`, `MacLayout`) | Where the program, the data folder, `Managed/` and the `UnityPlayer` library are; what the scope gate reads. `ExecutableHeader` reads ELF and Mach-O headers, including Mach-O slices and code signatures for `LOADER_BLOCKED` |
+| `LoaderKit` | Which BepInEx package, which files it adds at the game root, which must be executable, how the game starts with and without the loader, and the Steam launch option |
+| `UserFolders` | SpecTuner's default state folder and Unity's `Player.log` |
+| `IGameProcesses` (`WindowsGameProcesses` with `JobObject`, `UnixGameProcesses`) | Whether the game is running, starting it, and closing it if the sidecar stops. Always the host's |
+| `HostFiles`, `HostFacts` | Case sensitivity of the game folder's file system, file modes, facts for `diagnose` |
+
+`Platforms.Current` returns the host's profile, or the one named by
+`SPECTUNER_PLATFORM` (`windows`, `linux`, `macos`). Code outside `Platform/`
+asks the profile and never checks the operating system itself. The switch
+changes the layout, loader kit and folders, not the processes, so a Windows
+machine can run the Linux and macOS install, restore and scope gate logic on
+fake game folders. The app never sets the switch, and the server environment
+drops it with every other inherited `SPECTUNER_*` setting.
+
+### Starting a game
+
+| System | With the loader | Without the loader (`play` with `withChanges: false`) |
+|---|---|---|
+| Windows | A plain start of `<Name>.exe`: the game loads `winhttp.dll` from its folder | `--doorstop-enabled false` (Doorstop's documented argument) |
+| Linux | The program with the `DOORSTOP_*` variables, `LD_LIBRARY_PATH` and `LD_PRELOAD=libdoorstop.so`, as `run_bepinex.sh` sets them | A plain start |
+| macOS | `/usr/bin/arch` with `ARCHPREFERENCE=arm64,x86_64` and the `DOORSTOP_*` variables, passing `DYLD_LIBRARY_PATH` and `DYLD_INSERT_LIBRARIES=libdoorstop.dylib` with `-e` to the program, because dyld strips `DYLD_*` variables from platform binaries such as `arch` | A plain start |
+
+The sidecar reproduces what `run_bepinex.sh` would do; it never runs the
+script and never edits it. The script is installed only so that a Steam
+launch option can use it.
+
+Measured runs (`launch-and-benchmark`, `build-plugin`'s test) must close the
+game if the sidecar dies. Windows uses a job object with kill-on-close. Linux
+and macOS have none: the sidecar closes the game on SIGTERM, SIGINT, SIGHUP,
+SIGQUIT and a normal exit, and records the game in `running.json` so that the
+next command that checks for a running game closes a game left behind by a
+SIGKILL.
+
+When a run leaves no BepInEx log, the loader never got into the game. The
+failure data then has `loaderStarted: false`, and on Linux and macOS the
+player's message says so; on macOS it adds that macOS may be keeping add-ons
+out of the app. That is how a signature `LOADER_BLOCKED` could not see would
+show up.
+
+### The Play flow
+
+1. The Changes panel (`app/packages/gui-plugins/src/spectuner-changes/`)
+   shows **Play** when `detect` says the game is supported, and **Play without
+   changes** when there is also at least one change in the list.
+2. A click dispatches `play` in `machine.ts`; `panel.tsx` calls the plugin's
+   RPC `play({ withChanges })` (`app/packages/modder/plugin/rpc.ts`).
+3. `plugin/changes.ts` runs the sidecar's `play` with a one-minute timeout.
+4. The sidecar checks scope, takes the lock while it starts the game, deletes
+   a leftover benchmark request, starts the game detached (no shared handle or
+   pipe) and returns at once. It does not wait, measure or revert.
+5. The panel shows the summary and the `note`. On Linux and macOS, when the
+   loader is in place and the game folder is inside `steamapps/common`, it also
+   shows `steamLaunchOption` with a **Copy** button: Linux
+   `./run_bepinex.sh %command%`, macOS `"<game folder>/run_bepinex.sh" %command%`.
+
+The modder agent has no play tool; its prompt tells the player to press
+**Play**.
+
+### Diagnose
+
+`diagnose` is a read-only report for testers' bug reports: system, state
+folder, game folder facts, executable headers and signatures, loader files,
+log summaries, SpecTuner's record. It runs without the scope gate, writes
+nothing, and replaces paths, the user name and the computer name with
+placeholders. It is run from the installed app:
+
+| System | The sidecar inside the installed app |
+|---|---|
+| macOS | `/Applications/SpecTuner.app/Contents/Resources/spectuner/spectuner-sidecar` |
+| Linux, deb | `/opt/SpecTuner/resources/spectuner/spectuner-sidecar` (electron-builder's default install folder; `dpkg -L spectuner` confirms it) |
+| Linux, AppImage | `resources/spectuner/spectuner-sidecar` inside the image, reached with `--appimage-extract` |
+| Windows | `resources\spectuner\spectuner-sidecar.exe` in the install folder |
+
+### Packaging and data folders
+
+`build.sh` builds the system it runs on: Windows the NSIS installer (with
+`--installer`), Linux x64 an AppImage and a deb, macOS on Apple Silicon a dmg
+and a zip. electron-builder signs the whole macOS bundle ad hoc (the server
+and sidecar inside it included), without the hardened runtime, which would
+make macOS reject Electron's own frameworks with an ad hoc signature. The
+macOS app declares plain-language reasons for the folder prompts
+(`MAC_FOLDER_PROMPTS` in `electron-builder.config.ts`). `scripts/check-build.sh`
+checks a build on its own system; the smoke test runs it with
+`--start-app`.
+
+### What is unproven
+
+Nobody has checked these on a real machine. Each needs a tester's report (or
+a test that really runs it) before anyone says it works.
+
+- The loader really loading when SpecTuner starts a game on Linux, and on
+  Apple Silicon, without BepInEx's script.
+- Starts from Steam with the launch option; Steam's runtime container for
+  native Linux games; Flatpak Steam (`diagnose` reports `flatpakSteam`).
+- macOS: whether games signed with the hardened runtime really refuse the
+  loader, and whether `LOADER_BLOCKED` catches exactly those. The rule comes
+  from Apple's documentation, not from a real game. There is an open upstream
+  report that the loader fails on macOS games built with the newest Unity.
+- macOS: opening the unsigned app with "Open Anyway", the folder prompts,
+  the background server.
+- Linux: the AppImage on Ubuntu 24.04 (libfuse2; Electron's sandbox under
+  AppArmor), the deb's launcher and icon, sign-in links opening the browser,
+  the system keyring.
+- Where Unity writes `Player.log` on Linux and macOS (the sidecar follows
+  Unity's manual), and whether the Unity 6000 entrypoint workaround
+  (`BepInEx.cfg`) is needed there; it is applied on every system today.
 
 ## How to make common changes
 
@@ -112,14 +271,34 @@ Inside a game folder the sidecar writes only these:
    `docs/sidecar-contract.md`. The contract is the interface the TypeScript
    side builds against.
 5. Add tests in `sidecar/tests/SpecTuner.Sidecar.Tests/` with the fake game
-   fixtures in `Support/`. Tests set `SPECTUNER_HOME` to a temp folder.
+   fixtures in `Support/`. Tests set `SPECTUNER_HOME` to a temp folder. If
+   the command touches the game folder or starts the game, test it for each
+   system: `CreateGame(GamePlatform.Linux)` or `GamePlatform.MacOS` with
+   `UsePlatform`.
 6. Run `dotnet test SpecTuner.Sidecar.slnx`, then try it on a copy of a real
    game:
 
    ```sh
    # in the repository root, after ./sidecar/publish.sh
-   echo '{"gamePath":"C:/Games/SampleGame"}' | artifacts/sidecar/spectuner-sidecar.exe detect
+   echo '{"gamePath":"C:/Games/Sample Game"}' | artifacts/sidecar/spectuner-sidecar.exe detect
+   # on Linux, after ./sidecar/publish.sh linux-x64
+   echo '{"gamePath":"/home/player/Games/Sample Game"}' | artifacts/sidecar/linux-x64/spectuner-sidecar detect
    ```
+
+### Change something that differs per system
+
+1. Put the difference in `sidecar/src/SpecTuner.Sidecar/Platform/`: a member
+   on `IGameLayout`, `LoaderKit`, `UserFolders` or `IGameProcesses`, with one
+   implementation per system. Do not test `OperatingSystem.Is...` outside that
+   folder; only code in `Platform/` asks the real system.
+2. Keep Windows behaviour exactly as it was unless the change is meant for
+   Windows too.
+3. Test each system through `SPECTUNER_PLATFORM` (`UsePlatform`). A test that
+   needs a real process, signal or file mode carries `[OSCondition]` with the
+   reason; it runs only when the suite is run on that system.
+4. Update the contract ("Platforms", the scope gate, the command).
+5. Add the new behaviour to "What is unproven" above until a tester has
+   checked it on a real machine.
 
 ### Expose a sidecar command to the agent as a tool
 
@@ -165,8 +344,11 @@ only measured gains, use the right mod shape, and avoid code in its replies?
   `i18n/en.ts` text). Tests in `machine.test.ts`.
 - Data: the panel calls the plugin's RPC, defined in
   `app/packages/modder/plugin/rpc.ts` and served by `plugin/changes.ts` from
-  the sidecar's `changes`, `revert` and `reapply`. Tests in
+  the sidecar's `detect`, `changes`, `revert`, `reapply` and `play`. Tests in
   `app/packages/modder/test/changes.test.ts`.
+- Play: the buttons, the note and the Steam launch option with **Copy** are
+  in `panel.tsx` (`SteamLaunchOption`); when they show is decided in
+  `machine.ts` (`canPlay`, `canPlayWithout`). See "The Play flow" above.
 - If the panel needs new data from the sidecar, change the sidecar command and
   the contract first.
 - Run `bun run test` in `gui-plugins` and `modder`, the typecheck, and look at
@@ -186,9 +368,11 @@ only measured gains, use the right mod shape, and avoid code in its replies?
 
 ### Change the icon
 
-Follow `branding/README.md`. `make_icon.py` builds every size with Blender;
-`verify_ico.ts` checks `icon.ico`. Then copy the files to where the app uses
-them, all listed in that README: `app/packages/desktop/icons/{dev,beta,prod}/icon.ico`,
+Follow `branding/README.md`. `make_icon.py` builds every size with Blender
+(`--all`) and the macOS icon (`--mac`); `verify_ico.ts` checks `icon.ico` and
+`verify_icns.ts` checks `icon.icns`. Then copy the files to where the app uses
+them, all listed in that README: `app/packages/desktop/icons/{dev,beta,prod}/`
+(`icon.ico`, `icon.icns`, the Linux `<size>x<size>.png` set and `icon.png`),
 the notification icon in `app/packages/desktop/src/renderer/platform/`, the
 favicons in `app/packages/app/public` and `app/packages/ui/src/assets/favicon`,
 and the logo marks in `app/packages/ui/src/assets/logo/`.
@@ -230,7 +414,18 @@ at the screens in the unpackaged app.
   versions by hand.
 - **English only.** The translation mechanism remains; no other language
   ships.
-- **Windows x64 only.** Mac and Linux packaging was removed.
+- **Linux and macOS are untested on real machines.** The builds and the
+  sidecar's support for native Linux and macOS Unity Mono games are written
+  and covered by automated tests, which run on Windows through
+  `SPECTUNER_PLATFORM`. The smoke test builds and starts the app on GitHub's
+  Linux and macOS runners. No real game has been tried on either system; the
+  open points are under "What is unproven" above. The macOS app has only an ad hoc signature, so players must
+  use "Open Anyway".
+- **On Linux and macOS the loader does not start by itself.** A start from
+  Steam needs the launch option the Changes panel shows; a start from
+  anywhere else outside SpecTuner runs the game without its changes.
+- **Windows games through Proton or Wine are declined**, as are macOS games
+  whose signature keeps the loader out (`LOADER_BLOCKED`).
 - **Builds are not code-signed.**
 - **The background server outlives the window.** It listens only on
   localhost, behind a password.

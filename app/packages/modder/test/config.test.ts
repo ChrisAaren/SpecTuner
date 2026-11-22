@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { ConfigFlag } from "@spectuner/schema/config/flag"
 import { readFileSync } from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { SpecTunerConfig } from "../src/config.ts"
 import { SpecTunerEnv } from "../src/env.ts"
@@ -82,9 +83,11 @@ describe("SpecTunerConfig.document", () => {
 describe("SpecTunerEnv.make", () => {
   const home = path.resolve("Z:\\spectuner-home")
   const sidecar = path.resolve("Z:\\app\\spectuner-sidecar.exe")
+  // Absolute on the system the tests run on, like `home` and `sidecar`: the server's paths are always the host's.
+  const localAppData = path.resolve("C:\\Users\\player\\AppData\\Local")
   const base = {
     PATH: "C:\\Windows",
-    LOCALAPPDATA: "C:\\Users\\player\\AppData\\Local",
+    LOCALAPPDATA: localAppData,
     XDG_DATA_HOME: "C:\\Users\\player\\.local\\share",
     XDG_CONFIG_HOME: "C:\\Users\\player\\.config",
     xdg_state_home: "C:\\Users\\player\\.local\\state",
@@ -153,10 +156,49 @@ describe("SpecTunerEnv.make", () => {
   })
 
   test("defaults home to %LOCALAPPDATA%\\SpecTuner\\app", () => {
-    const defaulted = SpecTunerEnv.make({ sidecar, pluginDir, base })
-    expect(defaulted.XDG_DATA_HOME).toBe(
-      path.join("C:\\Users\\player\\AppData\\Local", "SpecTuner", "app", "data"),
-    )
+    const defaulted = SpecTunerEnv.make({ sidecar, pluginDir, base, platform: "win32" })
+    expect(defaulted.XDG_DATA_HOME).toBe(path.join(localAppData, "SpecTuner", "app", "data"))
+  })
+
+  test.each([
+    { platform: "win32" as const, folder: () => path.join(localAppData, "SpecTuner") },
+    { platform: "darwin" as const, folder: () => path.join(os.homedir(), "Library", "Application Support", "SpecTuner") },
+    // A relative XDG_DATA_HOME is ignored, as the XDG specification says.
+    { platform: "linux" as const, folder: () => path.join(os.homedir(), ".local", "share", "SpecTuner") },
+  ])("$platform: one SpecTuner folder holds the server's home and the sidecar's state", ({ platform, folder }) => {
+    const { SPECTUNER_HOME: _home, ...rest } = base
+    const own = { ...rest, XDG_DATA_HOME: "relative" }
+    const made = SpecTunerEnv.make({ sidecar, pluginDir, base: own, platform })
+    expect(made.XDG_DATA_HOME).toBe(path.join(folder(), "app", "data"))
+    // Always set, so the sidecar never derives its folder from the server's XDG_DATA_HOME.
+    expect(made.SPECTUNER_HOME).toBe(folder())
+    expect(SpecTunerEnv.folder(own, platform)).toBe(folder())
+    expect(SpecTunerEnv.defaultHome(own, platform)).toBe(path.join(folder(), "app"))
+  })
+
+  test("linux: the SpecTuner folder follows an absolute XDG_DATA_HOME", () => {
+    const data = path.resolve("/data/player")
+    expect(SpecTunerEnv.folder({ XDG_DATA_HOME: data }, "linux")).toBe(path.join(data, "SpecTuner"))
+  })
+
+  test("an inherited SPECTUNER_HOME is kept, in any letter case", () => {
+    expect(env.SPECTUNER_HOME).toBe("Z:\\state")
+    const { SPECTUNER_HOME: _home, ...rest } = base
+    const lower = SpecTunerEnv.make({ sidecar, pluginDir, base: { ...rest, spectuner_home: "Z:\\other" }, platform: "win32" })
+    expect(Object.entries(lower).filter(([key]) => /^spectuner_home$/i.test(key))).toEqual([["spectuner_home", "Z:\\other"]])
+  })
+
+  test("the sidecar's file name and published location per system", () => {
+    expect(SpecTunerEnv.sidecarFile("win32")).toBe("spectuner-sidecar.exe")
+    expect(SpecTunerEnv.sidecarFile("linux")).toBe("spectuner-sidecar")
+    expect(SpecTunerEnv.sidecarFile("darwin")).toBe("spectuner-sidecar")
+    expect(SpecTunerEnv.sidecarRid("win32", "x64")).toBe("win-x64")
+    expect(SpecTunerEnv.sidecarRid("linux", "x64")).toBe("linux-x64")
+    expect(SpecTunerEnv.sidecarRid("darwin", "arm64")).toBe("osx-arm64")
+    const artifacts = path.resolve("artifacts")
+    expect(SpecTunerEnv.publishedSidecar(artifacts, "win32", "x64")).toBe(path.join(artifacts, "sidecar", "spectuner-sidecar.exe"))
+    expect(SpecTunerEnv.publishedSidecar(artifacts, "linux", "x64")).toBe(path.join(artifacts, "sidecar", "linux-x64", "spectuner-sidecar"))
+    expect(SpecTunerEnv.publishedSidecar(artifacts, "darwin", "arm64")).toBe(path.join(artifacts, "sidecar", "osx-arm64", "spectuner-sidecar"))
   })
 
   test("refuses relative paths", () => {

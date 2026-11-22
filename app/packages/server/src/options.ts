@@ -35,6 +35,8 @@ export const ServerOptions = Schema.Struct({
       directory: Schema.optional(Schema.String),
       project: Schema.optional(Schema.Boolean),
       claude: Schema.optional(Schema.Boolean),
+      // false skips the machine-wide config directory and macOS managed preferences (MDM profiles).
+      system: Schema.optional(Schema.Boolean),
       file: Schema.optional(Schema.String),
       content: Schema.optional(Schema.String),
     }),

@@ -1,15 +1,23 @@
 # Sidecar contract
 
-The sidecar (`spectuner-sidecar.exe`) does all Unity-specific work. The
-TypeScript tools and the desktop UI only pass requests through and show
-results. This file is the interface both sides build against.
+The sidecar (`spectuner-sidecar.exe` on Windows, `spectuner-sidecar` on Linux
+and macOS) does all Unity-specific work. The TypeScript tools and the desktop
+UI only pass requests through and show results. This file is the interface both
+sides build against.
 
 ## Invocation
 
 ```
-spectuner-sidecar.exe <command>          # JSON request on stdin
+spectuner-sidecar.exe <command>          # JSON request on stdin (Linux/macOS: spectuner-sidecar)
 spectuner-sidecar.exe <command> --request <file.json>
 ```
+
+Builds: `sidecar/publish.sh [win-x64|linux-x64|osx-arm64|osx-x64]` (default
+`win-x64`). Windows writes `artifacts/sidecar/spectuner-sidecar.exe`; the
+others write `artifacts/sidecar/<rid>/spectuner-sidecar`. A build published on
+Windows has no execute bit and, for macOS, no code signature: the packaging step
+must `chmod +x` it, and an `osx-arm64` binary must be at least ad-hoc signed on a
+Mac (`codesign -s -`), because Apple Silicon refuses unsigned arm64 programs.
 
 - One JSON object in, one JSON object out on stdout. Nothing else is written
   to stdout. Diagnostics go to stderr.
@@ -19,8 +27,44 @@ spectuner-sidecar.exe <command> --request <file.json>
   `error.detail`, stack trace on stderr) and exits 1.
 - Strings are UTF-8 on stdin and stdout.
 - Property names are camelCase.
-- `SPECTUNER_HOME` overrides the state root (default
-  `%LOCALAPPDATA%\SpecTuner`). Tests always set it.
+- `SPECTUNER_HOME` overrides the state root. Tests always set it, and so does
+  the app. Default when unset: Windows `%LOCALAPPDATA%\SpecTuner`, macOS
+  `~/Library/Application Support/SpecTuner`, Linux
+  `${XDG_DATA_HOME:-~/.local/share}/SpecTuner` (a relative `XDG_DATA_HOME` is
+  ignored, as the XDG spec says).
+- `SPECTUNER_PLATFORM` (`windows`, `linux`, `macos`) is a test switch: it makes
+  the sidecar treat game folders as that system's games, whatever system it runs
+  on. Processes (starting and stopping the game) stay the real system's. The app
+  never sets it.
+
+### Platforms
+
+SpecTuner works with native Unity Mono games of the system it runs on:
+
+| System | Game | SpecTuner works in | Loader files it adds next to `BepInEx/` |
+|---|---|---|---|
+| Windows x64 | `<Name>.exe` + `<Name>_Data/` + `UnityPlayer.dll` | the game folder | `winhttp.dll`, `doorstop_config.ini`, `.doorstop_version` |
+| Linux x64 | `<Name>.x86_64` (also `<Name>.x86` or `<Name>` with no extension) + `<Name>_Data/` + `UnityPlayer.so` | the game folder | `libdoorstop.so`, `run_bepinex.sh` (made executable), `.doorstop_version` |
+| macOS (Apple Silicon; Intel where the game has an x86_64 build) | `<Name>.app` with `Contents/MacOS/<CFBundleExecutable>`, `Contents/Resources/Data/`, `Contents/Frameworks/UnityPlayer.dylib` | the folder that holds the `.app` (the player may pick either) | `libdoorstop.dylib`, `run_bepinex.sh` (made executable), `.doorstop_version` |
+
+All three use the unmodified BepInEx 5.4.23.6 release package for that system
+(`BepInEx_win_x64`, `BepInEx_linux_x64`, `BepInEx_macos_universal`), embedded in
+every build and checked against its SHA-256. `BepInEx/core` is the same in all
+three. On macOS nothing is ever written inside the `.app`, and SpecTuner never
+re-signs or edits a game. The Windows build of a game on Linux or macOS (meant
+for Proton or Wine) is declined (`COMPATIBILITY_LAYER_NOT_SUPPORTED`).
+
+On Windows the loader starts with every launch of the game (the game loads
+`winhttp.dll` from its folder). On Linux and macOS it does not: it is injected
+through environment variables when the game starts, exactly as the package's
+own `run_bepinex.sh` does (Linux: the `DOORSTOP_*` variables, `LD_LIBRARY_PATH`
+and `LD_PRELOAD=libdoorstop.so`; macOS: the `DOORSTOP_*` variables and
+`ARCHPREFERENCE=arm64,x86_64`, then `/usr/bin/arch -e DYLD_LIBRARY_PATH=… -e
+DYLD_INSERT_LIBRARIES=libdoorstop.dylib <program>`, because dyld strips `DYLD_*`
+variables from platform binaries such as `arch`). SpecTuner's own launches
+(`launch-and-benchmark`, `build-plugin`'s test, `play`) do this. A start from
+Steam loads the changes only with the launch option that `play` returns as
+`steamLaunchOption`.
 
 ### Envelope
 
@@ -57,7 +101,7 @@ Output must stay small. Lists are capped, and a `truncated` flag says so.
 | `CANNOT_REAPPLY` | `reapply` of a loader/probe change or of a past change with `canReapply: false`; the message says why |
 | `PROBE_BUILD_FAILED` | The probe plugin did not compile against this game's assemblies; nothing was changed. `data.errors` (at most 15) and `data.errorCount` |
 | `INVALID_SETTING` | `set-quality` with an unknown key or a value out of range; the message says what is valid |
-| `GAME_FAILED_TO_START` | `launch-and-benchmark`, or `build-plugin`'s test launch, got no result (see `launch-and-benchmark`) |
+| `GAME_FAILED_TO_START` | `launch-and-benchmark`, or `build-plugin`'s test launch, got no result (see `launch-and-benchmark`); `play` could not start the process |
 | `MOD_FAILED_TEST` | `build-plugin`'s test launch: the game started but the new mod did not load or logged errors, so it was removed again (see `build-plugin`) |
 | `LOG_NOT_FOUND` | `read-logs` and the log does not exist yet |
 | `ASSEMBLY_NOT_FOUND` | `search-code`/`read-code` with an `assembly` the game does not have (the message lists the game's own ones), or no game code at all |
@@ -71,15 +115,18 @@ Output must stay small. Lists are capped, and a `truncated` flag says so.
 ## State
 
 Per game, under `<SPECTUNER_HOME>/games/<id>/` where `<id>` is the first 16
-hex chars of SHA-256 (UTF-8) of the lower-cased full game path, normalized
-with `Path.GetFullPath` and without a trailing separator
-(e.g. `c:\games\sample game`). All JSON state is written atomically
-(temp file, then move). A `lock` file is held while a command changes the game.
+hex chars of SHA-256 (UTF-8) of the full game path, normalized with
+`Path.GetFullPath` and without a trailing separator, lower-cased on Windows and
+macOS and as it is on Linux (e.g. `c:\games\sample game`,
+`/home/player/Games/Sample Game`). On macOS the game path is the folder that
+holds the `.app`. All JSON state is written atomically (temp file, then move). A
+`lock` file is held while a command changes the game (and while `play` starts it).
 
 | File | Purpose |
 |---|---|
 | `game.json` | Game path, name, first-seen time, `loader` (`{ "ours": bool, "version": "5.4.23.6" }` or null), `probe` (`{ "sourceHash", "builtAt" }` of the installed probe, or null), and `restores` (one record per full restore) |
-| `baseline.json` | Manifest of every file in the game folder as first found: relative path (forward slashes), size, last-write time (UTC), SHA-256, plus the list of folders. Written once, before anything is added. |
+| `baseline.json` | Manifest of every file in the game folder as first found: relative path (forward slashes), size, last-write time (UTC), SHA-256, plus the list of folders. Written once, before anything is added. On Linux and macOS also `caseSensitive: true` when the game folder's file system tells names apart by case (found without writing); paths are then compared exactly, otherwise ignoring case (always on Windows, where the flag is absent). |
+| `running.json` | Linux and macOS only, while a measured run is in progress: the game's process id and start time. If the sidecar is killed outright, the next command that checks for a running game closes that game first and deletes the file |
 | `changes.json` | Ordered ledger of changes (see below) |
 | `history.json` | `{ "changes": [ …ledger entries… ] }`: the entries of earlier rounds, moved here by each full restore (oldest first, at most 1000). Kept so past changes can be shown and applied again (`reapply`), and so ids are never reused |
 | `snapshots/<changeId>/` | Copy of our own mutable files (`BepInEx/plugins/SpecTuner/**`, `BepInEx/config/spectuner.*.json`) as they were before that change: `snapshot.json` (list) plus `files/` |
@@ -89,8 +136,11 @@ with `Path.GetFullPath` and without a trailing separator
 
 Inside the game folder the sidecar writes only:
 
-- the BepInEx loader files: `BepInEx/`, `winhttp.dll`, `doorstop_config.ini`,
-  `.doorstop_version` (the zip's `changelog.txt` is never extracted)
+- the BepInEx loader files: `BepInEx/` and the system's loader files at the
+  root (see "Platforms": Windows `winhttp.dll`, `doorstop_config.ini`,
+  `.doorstop_version`; Linux and macOS `libdoorstop.so`/`libdoorstop.dylib`,
+  `run_bepinex.sh`, `.doorstop_version`). The zip's `changelog.txt` is never
+  extracted. On macOS all of this sits next to the `.app`, never inside it.
 - `BepInEx/plugins/SpecTuner/` (probe plugin and generated mods)
 - `BepInEx/config/spectuner.*.json` (quality overrides, benchmark request)
 - `BepInEx/spectuner/` (probe output: `hardware.json`, `settings.json`,
@@ -146,17 +196,20 @@ as past with reason `replaced`.
 
 ## Scope gate
 
-Every command except `detect` runs the same check first and refuses with the
+Every command except `detect` and `diagnose` runs the same check first and refuses with the
 same error when the game is out of scope. Codes:
 
 | Code | When |
 |---|---|
-| `GAME_NOT_FOUND` | Folder missing or no game exe in it |
-| `NOT_UNITY` | No `UnityPlayer.dll` / `<Name>_Data` pair |
-| `IL2CPP_NOT_SUPPORTED` | `GameAssembly.dll` or `<Name>_Data/il2cpp_data` present |
-| `NOT_WINDOWS_X64` | Game exe is not a 64-bit Windows executable |
+| `GAME_NOT_FOUND` | Folder missing or no game program in it (macOS: no `.app`, or more than one `.app`: the game needs a folder of its own) |
+| `COMPATIBILITY_LAYER_NOT_SUPPORTED` | Linux and macOS: no native game, but a Windows game (`.exe` with a `_Data` folder), meant for Proton or Wine |
+| `NOT_UNITY` | No `UnityPlayer` library / data folder pair |
+| `IL2CPP_NOT_SUPPORTED` | `GameAssembly.dll` / `.so` / `Contents/Frameworks/GameAssembly.dylib`, or `il2cpp_data` in the data folder |
+| `NOT_WINDOWS_X64` | Windows: game exe is not a 64-bit Windows executable |
+| `UNSUPPORTED_ARCHITECTURE` | Linux: the program (ELF header) is not x86-64. macOS: the program (Mach-O header) has no slice this Mac can run (Apple Silicon: arm64, or x86_64 under Rosetta; Intel: x86_64) |
 | `ANTI_CHEAT` | Easy Anti-Cheat, BattlEye, or similar files present |
 | `PROTECTED_CODE` | Game code is encrypted, packed, or DRM-wrapped |
+| `LOADER_BLOCKED` | macOS: the slice that would run is signed with the Hardened Runtime and lacks `com.apple.security.cs.allow-dyld-environment-variables` or `com.apple.security.cs.disable-library-validation`, so the loader cannot get in without changing the app, which SpecTuner never does |
 | `ONLINE_MULTIPLAYER` | Networking libraries for online multiplayer present |
 
 The sidecar only detects these. It never bypasses, disables, or works around
@@ -167,14 +220,36 @@ scope (for example a game update added a networking library) when SpecTuner
 already has state for it, so the player can always see and undo what
 SpecTuner did. `GAME_NOT_FOUND` is never bypassed.
 
-Checks run in the order of the table. Details:
-- Game exe: the `*.exe` in the folder root (not `UnityCrashHandler*`) with a
-  sibling `<Name>_Data` folder. Unity also needs `UnityPlayer.dll`, or for old
-  Unity versions `globalgamemanagers` / `mainData` / `data.unity3d` in the data
-  folder. A non-IL2CPP game without `<Name>_Data/Managed` is `NOT_UNITY`.
-- Anti-cheat: file and folder name patterns anywhere in the game folder.
-- Protected code: the exe has a `.bind` PE section (Steam DRM), or
-  `Managed/Assembly-CSharp.dll` exists but has no valid .NET metadata.
+Checks run in this order on every system: game found (`GAME_NOT_FOUND`,
+`COMPATIBILITY_LAYER_NOT_SUPPORTED`), Unity (`NOT_UNITY`), `IL2CPP_NOT_SUPPORTED`,
+managed code present (`NOT_UNITY`), architecture (`NOT_WINDOWS_X64` /
+`UNSUPPORTED_ARCHITECTURE`), `ANTI_CHEAT`, protection in the program itself
+(Windows `PROTECTED_CODE` for `.bind`, macOS `LOADER_BLOCKED`), protected
+managed code (`PROTECTED_CODE`), `ONLINE_MULTIPLAYER`. Details:
+- Game program, Windows: the `*.exe` in the folder root (not
+  `UnityCrashHandler*`) with a sibling `<Name>_Data` folder. Linux: for each
+  `<Name>_Data` folder, `<Name>.x86_64`, `<Name>.x86`, or an ELF file `<Name>`.
+  macOS: the one `.app` in the folder (Easy Anti-Cheat's
+  `start_protected_game*.app` aside), its program named by `CFBundleExecutable`
+  in `Contents/Info.plist` (or the only file in `Contents/MacOS`), its data in
+  `Contents/Resources/Data`. Unity also needs its `UnityPlayer` library
+  (`UnityPlayer.dll`, `UnityPlayer.so`, `Contents/Frameworks/UnityPlayer.dylib`),
+  or for old Unity versions `globalgamemanagers` / `mainData` / `data.unity3d` in
+  the data folder. A non-IL2CPP game without `Managed/` in its data folder is
+  `NOT_UNITY`.
+- Unity version: Windows reads the version resource of `UnityPlayer.dll` (or the
+  exe). Linux and macOS read the version string near the start of
+  `globalgamemanagers` / `data.unity3d` / `mainData` / `level0`.
+- Anti-cheat: file and folder name patterns anywhere in the game folder. Linux
+  adds `start_protected_game`, `EasyAntiCheat*.so`, `BEClient*.so`,
+  `*anticheat*.so`; macOS adds `start_protected_game.app`,
+  `start_protected_game_x86-64.app`, `*.app.eac`, `EasyAntiCheat*.dylib`,
+  `BEClient*.dylib`, `*anticheat*.dylib` (BattlEye's names come from community
+  reports, not from BattlEye).
+- Protected code: the Windows exe has a `.bind` PE section (Steam DRM), or
+  `Managed/Assembly-CSharp.dll` exists but has no valid .NET metadata. No Linux
+  or macOS equivalent of the `.bind` wrapper is known, so there is no such check
+  there.
 - Online multiplayer: networking assembly names in `<Name>_Data/Managed/`.
   Unity sign-in, cloud save, analytics (`Unity.Services.Authentication*`,
   `Unity.Services.CloudSave`, `Unity.Services.Core*`) and Steamworks.NET do
@@ -192,7 +267,9 @@ Makes no changes. Data:
 {
   "supported": true,
   "game": { "name": "Sample Game", "exe": "Sample Game.exe", "unityVersion": "6000.6.9f1",
-            "backend": "mono", "arch": "x64", "company": "DefaultCompany" },
+            "backend": "mono", "arch": "x64", "company": "DefaultCompany", "product": "Sample Game",
+            "platform": "windows" },   // exe: "Sample Game.x86_64" on Linux, "Sample Game.app" on macOS;
+                                       // arch on macOS lists the slices, e.g. "arm64+x64"
   "loader": { "installed": false, "ours": false, "version": null },
   "probe": { "installed": false },   // true when a live, committed probe change exists
   "activeChanges": 0
@@ -210,7 +287,12 @@ the game already has BepInEx; then it is not ours and is never removed),
 builds and installs the probe plugin. Records `loader` and `probe` changes.
 Idempotent. Other commands that need the loader call this themselves.
 
-- Refused with `GAME_RUNNING` while the game runs.
+- Refused with `GAME_RUNNING` while the game runs. The game counts as running
+  when a process runs the game's program file. On Linux and macOS the system
+  reports that file's path with every symbolic link followed (a game library
+  reached through a linked folder; macOS's own `/var`), so the sidecar compares
+  both the path it was given and the path behind the links; on macOS without
+  regard to letter case.
 - Never overwrites a baseline file. If BepInEx 5 (`BepInEx/core/BepInEx.dll`)
   was there at baseline, it is the player's: no files are added for the
   loader and no `loader` change is recorded (only `game.json` `loader.ours =
@@ -421,10 +503,15 @@ run so runs can be compared.
 
 - Installs the loader and probe first if needed. Refused with `GAME_RUNNING`
   when the game is already running.
-- Writes the benchmark request, starts `<Name>.exe` from the game folder with
-  no arguments and its stdio redirected (so nothing reaches our stdout), inside
-  a Windows job object with kill-on-close: if the sidecar is killed, the game
-  dies too. It waits for `BepInEx/spectuner/benchmark-<runId>.json`, the game
+- Writes the benchmark request, starts the game from the game folder with
+  no arguments and its stdio redirected (so nothing reaches our stdout). Windows:
+  `<Name>.exe`, inside a Windows job object with kill-on-close: if the sidecar is
+  killed, the game dies too. Linux and macOS: started the way `run_bepinex.sh`
+  starts it (see "Platforms"), without the script and without editing it; there
+  are no job objects, so if the sidecar is stopped (SIGTERM, SIGINT, SIGHUP,
+  SIGQUIT, or a normal exit) it closes the game, and if it is killed outright
+  (SIGKILL) the game is recorded in `running.json` and the next command that
+  checks for a running game closes it. It waits for `BepInEx/spectuner/benchmark-<runId>.json`, the game
   exiting, or `startupTimeoutSeconds + warmupSeconds + measureSeconds`. After
   the result the game gets 8 s to quit by itself, then it is closed.
 - The probe waits until its start-up passes are done and a scene is loaded,
@@ -515,7 +602,14 @@ since the last successful start is reverted automatically, and the result is
 was undone. A successful start marks pending changes `verified`.
 
 Failure data: `{ "runId", "reason": "crashed" | "exited" | "timeout" | "start-failed", "exitCode",
-"reverted": [ { "id", "kind", "title" } ], "fullRestore", "logErrors", "durationSeconds" }`.
+"reverted": [ { "id", "kind", "title" } ], "fullRestore", "logErrors", "durationSeconds", "loaderStarted" }`.
+`loaderStarted` is false when the run left no BepInEx log, i.e. the loader never
+got into the game. On Linux and macOS the message then adds that SpecTuner's mod
+loader didn't start inside the game; on macOS also that macOS may be keeping
+add-ons out of this game's app and that SpecTuner never changes an app to get
+around that (this is how a signature that `LOADER_BLOCKED` could not see shows
+up). Windows messages are unchanged. On Linux and macOS a game killed by a signal
+has `exitCode` 128 + the signal number.
 Undone newest first through the ledger; if the loader itself was never
 verified, that is a full restore (`fullRestore: true`). Closing the game window
 during a benchmark also counts as a failure.
@@ -526,12 +620,16 @@ Request: `{ "gamePath": "…", "source": "bepinex" | "player", "filter": "Double
 Returns matching lines from the last run, newest last, capped. Errors and
 exceptions are always included.
 
-`bepinex` is `BepInEx/LogOutput.log`; `player` is
-`%USERPROFILE%\AppData\LocalLow\<company>\<product>\Player.log` (from
-`app.info`). `tail` 1..200 (default 60); `filter` is a case-insensitive
+`bepinex` is `BepInEx/LogOutput.log`; `player` is Unity's Player.log, with
+company and product from `app.info` (Unity manual, "Log files"): Windows
+`%USERPROFILE%\AppData\LocalLow\<company>\<product>\Player.log`, Linux
+`~/.config/unity3d/<company>/<product>/Player.log`, macOS
+`~/Library/Logs/<company>/<product>/Player.log`. `tail` 1..200 (default 60); `filter` is a case-insensitive
 substring (all lines when empty). Error lines (`[Error`, `[Fatal`,
 `Exception`, `Error:`) are returned separately, the last 20. Lines are cut at
-300 characters and the user profile path is replaced by `%USERPROFILE%`.
+300 characters, the user profile (home) path is replaced by `%USERPROFILE%` on
+every system, and a user name in `/Users/<name>/`, `/home/<name>/` or
+`\Users\<name>\` by `%USERNAME%`.
 Runs for out-of-scope games that SpecTuner has state for, like `changes`.
 
 Data: `{ "source", "file": "LogOutput.log", "lastWritten", "totalLines", "lines": [], "errors": [], "errorCount", "truncated" }`.
@@ -623,10 +721,48 @@ Steps, all before the game folder is touched:
    `FileSystemWatcher`, `DriveInfo`); `Environment.Exit`, `FailFast`,
    `SetEnvironmentVariable`; threads and timers (`Thread`, `ThreadPool`,
    `System.Threading.Timer`, `System.Timers.Timer`, `Task.Run`,
-   `TaskFactory.StartNew`). Symbols are resolved, so `using` aliases,
+   `TaskFactory.StartNew`). Also, from a review of `BepInEx/core`, the
+   UnityEngine modules and the Mono libraries a game may ship in `Managed/`
+   (every dll there is a compile reference): native code through MonoMod
+   (`DynDll`, `DynDllImport`, `DynDllMapping`, `NativeDetour`,
+   `NativeDetourData`, `DetourHelper`, `IDetourNativePlatform`,
+   `MonoMod.RuntimeDetour.Platforms.*`, Harmony's `NativeDetourMethodPatcher`),
+   `BepInEx.Unix.*`, `System.Runtime.CompilerServices.Unsafe`,
+   `Type.GetTypeFromProgID`/`GetTypeFromCLSID` (COM), `Mono.Unix.*` and
+   `Mono.Posix.*` (direct system calls: chmod, unlink, exec, setenv);
+   generating or loading code (`Assembly.LoadWithPartialName`, MonoMod's
+   `DynamicMethodDefinition` and `DMD*` generators, `MonoMod.Utils.Cil.*`,
+   `ReflectionHelper.Load`, `Mono.CSharp.*`, `BepInEx.Preloader.*`,
+   `BepInEx.Bootstrap.TypeLoader`, `Chainloader.Initialize`/`Start`,
+   `BepInEx.Utility.TryResolveDllAssembly`, `HarmonyXInterop.*`,
+   `System.Xml.Xsl.*`); files (`ZipFile`, `ZipFileExtensions`,
+   `System.IO.Pipes.*`, `MemoryMappedFiles.*`, `IsolatedStorage.*`,
+   `System.IO.Ports.*`, `XmlDocument.Load`/`Save`, `XmlReader.Create`,
+   `XmlWriter.Create`, `XmlTextReader`, `XmlTextWriter`, `XmlUrlResolver`,
+   `XDocument`/`XElement` `Load`/`Save`, `ResourceReader`, `ResourceWriter`,
+   `ResourceManager.CreateFileBasedResourceManager`, the file trace listeners
+   and `DefaultTraceListener.LogFileName`, Mono.Cecil's `ReadAssembly`,
+   `ReadModule`, `Write`, assembly resolvers and symbol providers,
+   `Mono.Cecil.Pdb.*`, `Mono.Cecil.Mdb.*`, `Mono.Data.Sqlite.*`, Harmony's
+   `FileLog`, `HarmonyFileLog`, `Harmony.DEBUG` and `[HarmonyDebug]` (they write
+   a log file), `new BepInEx.Configuration.ConfigFile(…)` (a config file at any
+   path; the plugin's own `Config` stays allowed), `DiskLogListener`,
+   `BepInEx.Utility.TryOpenFileStream`, `UnityEngine.Windows.File`/`Directory`,
+   `ScreenCapture.CaptureScreenshot` and `Application.CaptureScreenshot`,
+   `AssetBundle.LoadFromFile`/`LoadFromFileAsync`, `Caching`,
+   `Profiler.logFile`); networking (`System.Runtime.Remoting.*`, `Ping`, the
+   legacy `Network`, `NetworkView`, `MasterServer`); `Debugger.Launch`;
+   `UnityEngine.Diagnostics.Utils` (forced crashes); threads (`Parallel`,
+   `Task.Start`, `BackgroundWorker`, `ThreadingHelper.StartAsyncInvoke`,
+   `ThreadingExtensions.RunParallel`); camera and microphone (`WebCamTexture`,
+   `Microphone`, `UnityEngine.Windows.WebCam.*`, `UnityEngine.Windows.Speech.*`,
+   `Application.RequestUserAuthorization`). A rule for a constructor alone is
+   written `Type..ctor` and applies to `new Type(…)` and target-typed `new(…)`.
+   Symbols are resolved, so `using` aliases,
    `using static` and fully qualified names are caught. Reflection
    (`System.Reflection` reads and invokes), `Path`, `MemoryStream` and all of
-   HarmonyLib are allowed. Not caught: anything reached only through
+   HarmonyLib's patching (`Harmony`, `PatchAll`, `Patch`, `AccessTools`,
+   `Traverse`) are allowed. Not caught: anything reached only through
    reflection strings (`Type.GetType("System.IO.File").GetMethod("Delete").Invoke(…)`),
    and game or Unity APIs that themselves touch files or the network.
 3. Compile errors (`COMPILE_FAILED`), with hints for private access (CS0122),
@@ -726,3 +862,90 @@ exception thrown every frame is listed once. BepInEx catches exceptions thrown w
 the game still starts; a mod with `loaded: false` or entries in `pluginErrors`
 should be reverted or fixed. `read-logs` with `filter` set to the plugin's name
 returns its own lines.
+
+### `play`
+Request: `{ "gamePath": "…", "withChanges": true }` (`withChanges` optional, default `true`).
+
+Starts the game for the player and returns at once: it does not wait for the
+game to exit, does not measure, and does not revert anything if the game fails
+later. The scope gate applies. `BUSY` while another command changes the game,
+`GAME_RUNNING` when the game is already running, `GAME_FAILED_TO_START` when the
+process could not be started (data `{ "started": false, "withChanges", "loaderActive": false,
+"steamLaunchOption": null, "note": null }`). The game shares no handle or pipe
+with the sidecar: the caller's read of the sidecar's output ends when the
+sidecar exits, and the game keeps running.
+
+- `withChanges: true`: the game starts with the loader active. Windows: a plain
+  start (the game loads `winhttp.dll` itself). Linux and macOS: with the
+  loader's environment, as `run_bepinex.sh` would (see "Platforms"). If the
+  loader is not in the game folder (SpecTuner has installed nothing), it is a
+  plain start and `loaderActive` is false. A leftover one-shot benchmark request
+  is deleted first.
+- `withChanges: false`: the loader is switched off for this run only and no
+  file is changed. Windows: the game gets Doorstop's documented argument
+  `--doorstop-enabled false` (UnityDoorstop README, "Doorstop arguments"; this
+  also switches off a BepInEx the player installed). Linux and macOS: the game
+  starts without the loader's environment.
+
+Success data:
+```jsonc
+{ "started": true, "withChanges": true, "loaderActive": true,
+  "steamLaunchOption": "./run_bepinex.sh %command%",   // or null
+  "note": "If Steam restarts the game by itself, …" }   // or null
+```
+- `steamLaunchOption`: Linux and macOS, when the loader is in place and the game
+  folder is in a Steam library (a `steamapps/common` folder): the text the player
+  pastes into the game's launch options in Steam so that a start from Steam also
+  loads the changes (BepInEx docs, "Running native Unix games through Steam").
+  Linux `./run_bepinex.sh %command%`; macOS `"<game folder>/run_bepinex.sh" %command%`
+  (an absolute path, shown to the player only). Null on Windows and elsewhere.
+- `note`: one plain sentence or null. With the launch option: "If Steam restarts
+  the game by itself, it starts without your changes. To have them when you start
+  the game from Steam, add the launch option shown here to the game's launch
+  options in Steam." Before anything was installed: "SpecTuner hasn't added
+  anything to this game yet, so it started as usual."
+
+`summary`: "Started <Game> with your changes.", "Started <Game> without SpecTuner's changes.", or, when
+SpecTuner has installed nothing yet, "Started <Game>."
+
+### `diagnose`
+Request: `{ "gamePath": "…" }` (`gamePath` optional).
+
+A read-only report for remote help: testers paste it into a bug report. It
+runs for any folder, in scope or not (no scope gate), and writes nothing
+anywhere: no state folder, no lock, nothing in the game folder.
+
+Data (sections without a game folder: `sidecar`, `system`, `stateFolder`,
+`environment`, `text`, `redactions`):
+```jsonc
+{ "sidecar": { "version", "runtimeIdentifier", "dotnet", "platform", "platformOverridden" },
+  "system": { "os", "osVersion", "distribution": { "id", "versionId" } /* Linux */, "osArchitecture",
+              "processArchitecture", "underRosetta" /* macOS */, "processorCount" },
+  "stateFolder": { "path": "<state>", "fromSpectunerHome", "exists" },
+  "environment": { "loaderVariablesSet": [ "LD_PRELOAD", … ] },        // names only, never values
+  "game": { "folderExists", "folder": { "steamLibrary", "flatpakSteam", "caseSensitive" },
+            "supported", "refusal": { "code", "detail" } | null, "facts": { …as detect… },
+            "dataFolder", "program", "markers": { "unityPlayer", "gameAssembly", "il2cppData", "managedDlls", "appInfo" },
+            "entries": { "total", "truncated", "items": [ { "name", "kind", "size", "mode" } ] },   // top level, ≤ 40
+            "programs": [ { "name", "format": "pe" | "elf" | "mach-o" | "mach-o-universal" | "unknown", "arches",
+                            "peSections", "slices": [ { "arch", "signed", "hardenedRuntime",
+                            "allowsDyldEnvironment", "disablesLibraryValidation" } ], "executable" } ] },  // ≤ 10
+  "loader": { "package", "files": [ { "name", "present", "matchesPackage", "executable" } ], "bepinexVersion",
+              "doorstopVersion", "entrypointType", "otherPlatformLoaderFiles", "melonLoader", "steamLaunchOption" },
+  "logs": { "bepinex": { "path", "exists", "lastWritten", "totalLines", "header", "chainloaderStarted",
+                         "loadedPlugins", "errorCount", "errors" /* last 15 */ },
+            "player": { "path", "exists", "lastWritten", "totalLines", "errorCount", "errors" } },
+  "spectuner": { "hasRecord", "loader", "probeBuilt", "restores", "baselineFiles", "caseSensitive",
+                 "changes": { "loader/active/verified": 1, … }, "lastBenchmarks": [ { "runId", "ok", "failure", "trial", "avgFps" } ],
+                 "lockFilePresent", "measuredGameRecorded" },
+  "gameRunning": false,
+  "text": "SpecTuner diagnosis\n…",   // the same content as plain indented lines, for pasting
+  "redactions": 12 }
+```
+`mode` and `executable` are null on Windows. Left out on purpose: absolute paths
+(the game folder becomes `<game>`, the state folder `<state>`, the home folder
+`~`), the user name and the computer name (`<name>`), environment variable
+values, the game id (it is derived from the path). Log lines are cleaned as in
+`read-logs` and then redacted. As a last step the whole output is checked again
+for the home, game and state paths, the user name and the computer name, and
+any hit is replaced; `redactions` counts the replacements.

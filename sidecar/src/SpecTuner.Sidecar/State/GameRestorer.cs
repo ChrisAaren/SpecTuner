@@ -35,7 +35,7 @@ public static class GameRestorer
     {
         var root = state.GamePath;
         var loaderIsOurs = record.Loader?.Ours == true || ledger.Live.Any(e => e.Kind == ChangeKinds.Loader);
-        var recordedFiles = new HashSet<string>(ledger.Live.SelectMany(e => e.Files), GameTree.PathComparer);
+        var recordedFiles = new HashSet<string>(ledger.Live.SelectMany(e => e.Files), baseline.Comparer);
 
         var entries = GameTree.Entries(root).ToList();
         var removed = 0;
@@ -105,7 +105,7 @@ public static class GameRestorer
     public static VerifyReport Verify(string root, Baseline baseline)
     {
         var current = GameTree.Files(root).ToList();
-        var currentSet = new HashSet<string>(current, GameTree.PathComparer);
+        var currentSet = new HashSet<string>(current, baseline.Comparer);
 
         var leftInPlace = current.Where(p => !baseline.Contains(p)).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
         var missing = baseline.Files.Where(f => !currentSet.Contains(f.Path)).Select(f => f.Path).ToList();

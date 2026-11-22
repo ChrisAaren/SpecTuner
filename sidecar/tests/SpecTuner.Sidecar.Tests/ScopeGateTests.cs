@@ -5,6 +5,8 @@ namespace SpecTuner.Sidecar.Tests;
 [TestClass]
 public sealed class ScopeGateTests : SidecarTest
 {
+    private const string WindowsLayoutOnly = "Windows game layout (.exe, PE header); the Linux and macOS versions are in LinuxScopeTests and MacScopeTests, which run on every system.";
+
     [TestMethod]
     public void MonoLayout_IsSupported_WithGameFacts()
     {
@@ -17,9 +19,9 @@ public sealed class ScopeGateTests : SidecarTest
         Assert.IsTrue(data.GetProperty("supported").GetBoolean());
         var facts = data.GetProperty("game");
         Assert.AreEqual("Fixture Game", facts.GetProperty("name").GetString());
-        Assert.AreEqual("Fixture Game.exe", facts.GetProperty("exe").GetString());
+        Assert.AreEqual(game.AppDir is null ? Path.GetFileName(game.ExePath) : "Fixture Game.app", facts.GetProperty("exe").GetString());
         Assert.AreEqual("mono", facts.GetProperty("backend").GetString());
-        Assert.AreEqual("x64", facts.GetProperty("arch").GetString());
+        Assert.AreEqual(game.Platform == SpecTuner.Sidecar.Platform.GamePlatform.MacOS ? "arm64+x64" : "x64", facts.GetProperty("arch").GetString());
         Assert.AreEqual("TestCompany", facts.GetProperty("company").GetString());
         Assert.IsFalse(data.GetProperty("loader").GetProperty("installed").GetBoolean());
         Assert.AreEqual(0, data.GetProperty("activeChanges").GetInt32());
@@ -35,7 +37,7 @@ public sealed class ScopeGateTests : SidecarTest
                      "Unity.Services.CloudSave.dll", "Unity.Services.Core.dll", "Unity.Services.Core.Networking.dll",
                      "Unity.Services.Core.Analytics.dll", "com.rlabrecque.steamworks.net.dll", "Steamworks.NET.dll",
                  })
-            game.Write($"{game.Name}_Data/Managed/{dll}", GameFixture.ManagedAssembly());
+            game.Write($"{game.DataRelative}/Managed/{dll}", GameFixture.ManagedAssembly());
 
         AssertOk(Run("detect", new { gamePath = game.Root }));
     }
@@ -69,6 +71,7 @@ public sealed class ScopeGateTests : SidecarTest
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows, IgnoreMessage = WindowsLayoutOnly)]
     public void ExeWithoutDataFolder_IsNotUnity()
     {
         var dir = Path.Combine(TempDir, "other");
@@ -83,8 +86,8 @@ public sealed class ScopeGateTests : SidecarTest
     public void DataFolderWithoutUnityFiles_IsNotUnity()
     {
         var game = CreateGame();
-        File.Delete(game.Full("UnityPlayer.dll"));
-        File.Delete(game.Full($"{game.Name}_Data/globalgamemanagers"));
+        File.Delete(game.Full(game.UnityPlayerRelative));
+        File.Delete(game.Full($"{game.DataRelative}/globalgamemanagers"));
 
         AssertRefused(Run("detect", new { gamePath = game.Root }), "NOT_UNITY");
     }
@@ -95,6 +98,7 @@ public sealed class ScopeGateTests : SidecarTest
     public void Il2CppLayout_IsDeclined_WithPlainMessage(string marker, bool isDirectory)
     {
         var game = CreateGame();
+        marker = game.Native(marker);
         Directory.Delete(game.ManagedDir, recursive: true);
         if (isDirectory)
             game.Write(marker + "/Metadata/global-metadata.dat", GameFixture.RandomBytes(64, 3));
@@ -116,6 +120,7 @@ public sealed class ScopeGateTests : SidecarTest
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows, IgnoreMessage = WindowsLayoutOnly)]
     public void X86Exe_IsNotWindowsX64()
     {
         var game = CreateGame();
@@ -144,6 +149,7 @@ public sealed class ScopeGateTests : SidecarTest
     public void AntiCheatFiles_AreDeclined(string relative, bool isDirectory)
     {
         var game = CreateGame();
+        relative = game.Native(relative);
         if (isDirectory)
             game.Mkdir(relative);
         else
@@ -162,7 +168,7 @@ public sealed class ScopeGateTests : SidecarTest
         var bytes = GameFixture.RandomBytes(8192, 4);
         bytes[0] = (byte)'M';
         bytes[1] = (byte)'Z';
-        game.Write($"{game.Name}_Data/Managed/Assembly-CSharp.dll", bytes);
+        game.Write($"{game.DataRelative}/Managed/Assembly-CSharp.dll", bytes);
 
         AssertRefused(Run("detect", new { gamePath = game.Root }), "PROTECTED_CODE");
     }
@@ -171,12 +177,13 @@ public sealed class ScopeGateTests : SidecarTest
     public void NativeAssemblyCSharpWithoutMetadata_IsProtectedCode()
     {
         var game = CreateGame();
-        game.Write($"{game.Name}_Data/Managed/Assembly-CSharp.dll", PeBuilder.Build());
+        game.Write($"{game.DataRelative}/Managed/Assembly-CSharp.dll", PeBuilder.Build());
 
         AssertRefused(Run("detect", new { gamePath = game.Root }), "PROTECTED_CODE");
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows, IgnoreMessage = WindowsLayoutOnly)]
     public void SteamDrmBindSection_IsProtectedCode()
     {
         var game = CreateGame();
@@ -207,7 +214,7 @@ public sealed class ScopeGateTests : SidecarTest
     public void NetworkingAssemblies_AreOnlineMultiplayer(string dll)
     {
         var game = CreateGame();
-        game.Write($"{game.Name}_Data/Managed/{dll}", GameFixture.ManagedAssembly());
+        game.Write($"{game.DataRelative}/Managed/{dll}", GameFixture.ManagedAssembly());
 
         var envelope = Run("detect", new { gamePath = game.Root });
 
@@ -219,7 +226,7 @@ public sealed class ScopeGateTests : SidecarTest
     public void OtherCommands_RunTheScopeGate()
     {
         var game = CreateGame();
-        game.Write("GameAssembly.dll", PeBuilder.Build());
+        game.Write(game.GameAssemblyRelative, PeBuilder.Build());
 
         AssertRefused(Run("install", new { gamePath = game.Root }), "IL2CPP_NOT_SUPPORTED");
         AssertRefused(Run("changes", new { gamePath = game.Root }), "IL2CPP_NOT_SUPPORTED");

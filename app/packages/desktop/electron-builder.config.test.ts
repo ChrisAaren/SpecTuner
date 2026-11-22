@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test"
 import { statSync } from "node:fs"
-import { cp, mkdtemp, realpath, rm } from "node:fs/promises"
+import { cp, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { Configuration } from "electron-builder"
-import { getConfig } from "./electron-builder.config"
+import { getConfig, iconResources, linuxExecutableName, MAC_FOLDER_PROMPTS, spectunerResources } from "./electron-builder.config"
+import { NativeArch } from "../../script/native-arch"
 import { verifyPreviewBinding } from "./script/preview-binding"
 
 // Use electron-builder's matcher so the tests also cover its glob and directory traversal semantics.
@@ -18,7 +19,8 @@ const channels = [
   { channel: "prod", appId: "com.spectuner.desktop", productName: "SpecTuner" },
 ] as const
 
-function load(channel: string, target?: string): Configuration {
+// The Windows target unless a test names another, so the Windows cases run on every host.
+function load(channel: string, target: string | undefined = "windows-x64"): Configuration {
   const previous = process.env.SPECTUNER_CHANNEL
   const previousTarget = process.env.SPECTUNER_TARGET
   process.env.SPECTUNER_CHANNEL = channel
@@ -59,7 +61,7 @@ test.each(channels)("channel identity for $channel", ({ channel, appId, productN
   expect(config.publish).toBeNull()
   // The `opencode://` scheme belongs to an installed OpenCode; SpecTuner registers no scheme.
   expect(config.protocols).toBeUndefined()
-  // Windows x64 only.
+  // A Windows build carries only Windows packaging.
   expect(config.mac).toBeUndefined()
   expect(config.dmg).toBeUndefined()
   expect(config.linux).toBeUndefined()
@@ -94,8 +96,9 @@ test.each(channels)("every icon in the $channel icon folder is SpecTuner's", asy
   const icons = path.join(import.meta.dirname, "icons", channel)
   const branding = path.join(import.meta.dirname, "../../../branding")
   const files = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: icons }))).map((file) => file.replaceAll("\\", "/"))
-  // icon.ico is the Windows icon; the web UI build reads its icons from packages/app/public (icons/README.md).
-  expect(files.sort()).toEqual(["icon.ico"])
+  // icon.ico is the Windows icon, icon.icns the macOS one, the `<size>x<size>.png` files the Linux icon theme and
+  // icon.png the Linux window icon. The web UI build reads its icons from packages/app/public (icons/README.md).
+  expect(files.sort()).toEqual(Object.keys(ICON_SOURCES).sort())
 
   // branding/ lives in the outer SpecTuner repository, beside this one.
   if (await Bun.file(path.join(branding, "icon.ico")).exists()) {
@@ -105,9 +108,17 @@ test.each(channels)("every icon in the $channel icon folder is SpecTuner's", asy
           Buffer.from(await Bun.file(path.join(branding, source)).arrayBuffer()),
         ),
       ).toBe(true)
-    await same("icon.ico", "icon.ico")
+    for (const [file, source] of Object.entries(ICON_SOURCES)) await same(file, source)
   }
 })
+
+// Each file in icons/<channel>/ and the branding/ output it is a copy of.
+const ICON_SOURCES: Record<string, string> = {
+  "icon.ico": "icon.ico",
+  "icon.icns": "icon.icns",
+  "icon.png": "icon-512.png",
+  ...Object.fromEntries([16, 24, 32, 48, 64, 128, 256, 512].map((size) => [`${size}x${size}.png`, `icon-${size}.png`])),
+}
 
 test("shared packaging defaults", async () => {
   const config = load("dev")
@@ -250,6 +261,139 @@ test("the trimmed Zip.js package can still export compressed logs", async () => 
     expect(await entries[0].getData(new zip.TextWriter())).toBe("diagnostic log\n".repeat(100))
     await reader.close()
     await zip.terminateWorkers()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+const targets = [
+  { target: "linux-x64", os: "linux", server: "spectuner-server", sidecar: "spectuner-sidecar", icons: ["icon.png"] },
+  { target: "darwin-arm64", os: "darwin", server: "spectuner-server", sidecar: "spectuner-sidecar", icons: [] },
+  { target: "windows-x64", os: "win32", server: "spectuner-server.exe", sidecar: "spectuner-sidecar.exe", icons: ["icon.ico"] },
+] as const
+
+test.each(targets)("$target ships its own server, sidecar and window icon outside app.asar", ({ target, os, server, sidecar, icons }) => {
+  const config = load("prod", target)
+  expect(spectunerResources(os)).toEqual([sidecar, "modder.txt", "plugin/index.ts"])
+  expect(iconResources(os)).toEqual(icons)
+  expect(config.extraResources).toEqual([
+    { from: "resources/", to: "", filter: [server, "spectuner-server.version"] },
+    { from: "resources/spectuner/", to: "spectuner", filter: ["**/*"] },
+    ...(icons.length ? [{ from: "resources/icons/", to: "icons", filter: [...icons] }] : []),
+  ])
+  const filter = trimFilter(import.meta.dirname, config)
+  const file = statSync(import.meta.filename)
+  expect(filter(path.join(import.meta.dirname, "resources/spectuner", sidecar), file)).toBe(false)
+  expect(filter(path.join(import.meta.dirname, "resources", server), file)).toBe(false)
+})
+
+test.each(["dev", "beta", "prod"] as const)("macOS %s: unsigned dmg and zip, ad hoc signature, plain folder prompts", (channel) => {
+  const config = load(channel, "darwin-arm64")
+  expect(config.mac).toEqual({
+    category: "public.app-category.utilities",
+    icon: "resources/icons/icon.icns",
+    target: ["dmg", "zip"],
+    identity: "-",
+    hardenedRuntime: false,
+    extendInfo: MAC_FOLDER_PROMPTS,
+  })
+  expect(config.dmg).toEqual({ icon: "resources/icons/icon.icns" })
+  // Flipping a fuse breaks the signature; without any valid signature Apple Silicon refuses to start the app.
+  expect(config.electronFuses?.resetAdHocDarwinSignature).toBe(true)
+  expect(config.linux).toBeUndefined()
+  expect(config.deb).toBeUndefined()
+  // Every prompt names SpecTuner and says why, in words a player understands.
+  for (const text of Object.values(MAC_FOLDER_PROMPTS)) expect(text).toMatch(/^SpecTuner needs to open .+ to find and change games/)
+  // ffi-rs is used only on Windows, so neither its loader nor a binding ships.
+  expect(config.asarUnpack).toBeUndefined()
+  expect(config.files).toContain("!**/node_modules/ffi-rs{,/**/*}")
+  expect(config.files).toContain("!**/node_modules/@yuuang/ffi-rs-*{,/**/*}")
+})
+
+test.each([
+  { channel: "dev", appId: "com.spectuner.desktop.dev", executable: "com.spectuner.desktop.dev" },
+  { channel: "beta", appId: "com.spectuner.desktop.beta", executable: "com.spectuner.desktop.beta" },
+  { channel: "prod", appId: "com.spectuner.desktop", executable: "com.spectuner" },
+] as const)("Linux $channel: AppImage and deb, launcher matched to the window", ({ channel, appId, executable }) => {
+  const config = load(channel, "linux-x64")
+  expect(linuxExecutableName(appId)).toBe(executable)
+  expect(config.linux).toMatchObject({
+    icon: "resources/icons",
+    category: "Utility",
+    executableName: executable,
+    syncDesktopName: true,
+    desktop: { entry: { StartupWMClass: appId } },
+    target: ["AppImage", "deb"],
+  })
+  // The executable never ends in `.desktop`, which AppImage integration tools would read as a launcher.
+  expect(config.linux?.executableName).not.toMatch(/\.desktop$/)
+  expect(config.extraMetadata).toMatchObject({ desktopName: `${appId}.desktop` })
+  expect(config.deb).toEqual({ packageName: { dev: "spectuner-dev", beta: "spectuner-beta", prod: "spectuner" }[channel] })
+  expect(config.mac).toBeUndefined()
+  expect(config.rpm).toBeUndefined()
+  expect(config.electronFuses?.resetAdHocDarwinSignature).toBeUndefined()
+  expect(config.asarUnpack).toBeUndefined()
+})
+
+test("a Windows build's metadata carries only the version, as before; Linux adds the launcher name and homepage", () => {
+  const keys = ["SPECTUNER_VERSION", "SPECTUNER_HOMEPAGE", "GITHUB_SERVER_URL", "GITHUB_REPOSITORY"] as const
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]))
+  keys.forEach((key) => delete process.env[key])
+
+  try {
+    expect(load("prod", "windows-x64").extraMetadata).toBeUndefined()
+    process.env.SPECTUNER_VERSION = "9.9.9"
+    expect(load("prod", "windows-x64").extraMetadata).toEqual({ version: "9.9.9" })
+    expect(load("prod", "linux-x64").extraMetadata).toEqual({ desktopName: "com.spectuner.desktop.desktop", version: "9.9.9" })
+    // The deb needs a homepage: a GitHub Actions run's repository, or SPECTUNER_HOMEPAGE.
+    process.env.GITHUB_SERVER_URL = "https://github.example"
+    process.env.GITHUB_REPOSITORY = "owner/repo"
+    expect(load("prod", "linux-x64").extraMetadata).toMatchObject({ homepage: "https://github.example/owner/repo" })
+    process.env.SPECTUNER_HOMEPAGE = "https://spectuner.example"
+    expect(load("prod", "linux-x64").extraMetadata).toMatchObject({ homepage: "https://spectuner.example" })
+    expect(load("prod", "windows-x64").extraMetadata).toEqual({ version: "9.9.9" })
+    expect(load("prod", "linux-x64").linux?.maintainer).toBe("SpecTuner")
+  } finally {
+    keys.forEach((key) => {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    })
+  }
+})
+
+test("the sidecar check looks at the program's own header, not at the .NET assemblies packed inside it", async () => {
+  // A .NET single-file program: a native host, then managed PE images. A precompiled assembly carries a machine value
+  // of its own (0xfd1d on Linux x64), which the whole-file check takes for foreign code.
+  const managed = Buffer.alloc(0x100)
+  managed.write("MZ", 0, "latin1")
+  managed.writeUInt32LE(0x80, 0x3c)
+  managed.writeUInt32LE(0x4550, 0x80)
+  managed.writeUInt16LE(0xfd1d, 0x84)
+  const elf = Buffer.alloc(0x40)
+  elf.write("\x7fELF", 0, "latin1")
+  elf.set([2, 1, 1], 4)
+  elf.writeUInt16LE(62, 18)
+  elf.writeUInt32LE(1, 20)
+  const macho = Buffer.alloc(0x40)
+  macho.writeUInt32LE(0xfeedfacf, 0)
+  macho.writeUInt32LE(0x0100000c, 4)
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "spectuner-sidecar-host-"))
+  try {
+    const linux = path.join(dir, "linux")
+    const mac = path.join(dir, "mac")
+    const text = path.join(dir, "text")
+    await writeFile(linux, Buffer.concat([elf, managed]))
+    await writeFile(mac, Buffer.concat([macho, managed]))
+    await writeFile(text, "#!/bin/sh\n")
+
+    await expect(NativeArch.verify(linux, "x64")).rejects.toThrow(/must contain only x64 code/)
+    await NativeArch.verifyHost(linux, "ELF", "x64")
+    await NativeArch.verifyHost(mac, "Mach-O", "arm64")
+    await expect(NativeArch.verifyHost(linux, "ELF", "arm64")).rejects.toThrow(/must be a ELF arm64 program, but is ELF x64/)
+    await expect(NativeArch.verifyHost(linux, "Mach-O", "x64")).rejects.toThrow(/but is ELF x64/)
+    await expect(NativeArch.verifyHost(mac, "Mach-O", "x64")).rejects.toThrow(/but is Mach-O arm64/)
+    await expect(NativeArch.verifyHost(text, "ELF", "x64")).rejects.toThrow(/is not a native executable/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

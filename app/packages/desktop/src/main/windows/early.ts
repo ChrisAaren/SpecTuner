@@ -5,6 +5,7 @@ import { app, BrowserWindow, screen, shell } from "electron"
 import { resolveExternalURL } from "../files/external-url"
 import { windowArguments } from "./bootstrap"
 import { devToolsEnabled } from "./devtools"
+import { windowIconFile } from "./icon"
 import { WINDOW_IDS_KEY } from "../storage/keys"
 import { getStore } from "../storage/store"
 import { platformFrame, storedBackgroundColor, storedZoomLevel, tone } from "./defaults"
@@ -83,9 +84,10 @@ export function createEarlyWindow() {
   const file = path.join(app.getPath("userData"), windowStateFile(id))
   const state = resolveWindowState(readWindowState(file), { width: 1280, height: 800 }, displays)
   const zoom = storedZoomLevel()
-  // Packaged: `<resources>/icons/icon.ico`, which electron-builder.config.ts copies out of app.asar. Unpackaged: the
-  // folder script/copy-icons.ts fills. Keep in sync with windowAppearance (appearance.ts).
+  // Packaged: `<resources>/icons/<windowIconFile()>`, which electron-builder.config.ts copies out of app.asar.
+  // Unpackaged: the folder script/copy-icons.ts fills. Keep in sync with windowAppearance (appearance.ts).
   const icons = app.isPackaged ? path.join(process.resourcesPath, "icons") : path.join(root, "../../resources/icons")
+  const iconFile = windowIconFile()
 
   // On Windows, maximize() on a hidden window shows it with SW_SHOWMAXIMIZED, so it never paints at
   // its normal bounds first. macOS does not reliably enter fullscreen while hidden, so it shows first.
@@ -99,7 +101,7 @@ export function createEarlyWindow() {
     show: !deferReveal,
     autoHideMenuBar: true,
     title: "SpecTuner",
-    icon: path.join(icons, "icon.ico"),
+    icon: iconFile ? path.join(icons, iconFile) : undefined,
     backgroundColor: storedBackgroundColor(),
     ...platformFrame(tone(), zoom),
     webPreferences: {

@@ -418,3 +418,13 @@ describe("upgrade from the build with opencode's names", () => {
     expect(SpecTunerUpgrade.isOldServer("C:\\Users\\p\\.opencode\\bin\\opencode.exe", dirs)).toBe(false)
   })
 })
+
+test("the upgrade step applies only on Windows, where the builds with opencode's names shipped", async () => {
+  expect(SpecTunerUpgrade.applies("win32")).toBe(true)
+  expect(SpecTunerUpgrade.applies("darwin")).toBe(false)
+  expect(SpecTunerUpgrade.applies("linux")).toBe(false)
+  // The app's entry point checks it before doing anything.
+  const source = await Bun.file(path.join(import.meta.dirname, "index.ts")).text()
+  const step = source.slice(source.indexOf("export async function upgradeFromPreviousBuild"))
+  expect(step.slice(0, step.indexOf("const newHome"))).toContain("SpecTunerUpgrade.applies(process.platform)")
+})

@@ -57,7 +57,7 @@ public static class PluginCompiler
 
         var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
             .WithOptimizationLevel(OptimizationLevel.Release)
-            .WithPlatform(Platform.AnyCpu)
+            .WithPlatform(Microsoft.CodeAnalysis.Platform.AnyCpu)
             .WithDeterministic(true)
             .WithAllowUnsafe(false)
             .WithNullableContextOptions(NullableContextOptions.Disable)

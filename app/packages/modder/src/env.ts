@@ -28,9 +28,9 @@ export const FLAGS = [
 ] as const
 
 export interface Input {
-  /** Root of the server's own data, config, cache and state. Default `%LOCALAPPDATA%\SpecTuner\app`. */
+  /** Root of the server's own data, config, cache and state. Default `<SpecTuner folder>/app` ({@link defaultHome}). */
   readonly home?: string
-  /** Absolute path of `spectuner-sidecar.exe`. */
+  /** Absolute path of the sidecar program (`spectuner-sidecar.exe` on Windows, `spectuner-sidecar` elsewhere). */
   readonly sidecar: string
   /** Absolute path of the plugin directory. */
   readonly pluginDir: string
@@ -38,6 +38,8 @@ export interface Input {
   readonly system?: string
   /** Environment to start from. Default `process.env`. */
   readonly base?: Readonly<Record<string, string | undefined>>
+  /** The system the server runs on, which picks the default folders. Default `process.platform`. */
+  readonly platform?: NodeJS.Platform
 }
 
 /** Directory layout under `home`. */
@@ -50,8 +52,55 @@ export function dirs(home: string) {
   }
 }
 
-export function defaultHome(base: Readonly<Record<string, string | undefined>> = process.env) {
-  return path.join(base.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local"), "SpecTuner", "app")
+/**
+ * SpecTuner's one folder in the system's usual place for per-user application data. The server's home is `app` (or
+ * `app-dev`) inside it, and the sidecar keeps each game's state in `games` inside it (`SPECTUNER_HOME`), so the two
+ * always agree:
+ * - Windows: `%LOCALAPPDATA%\SpecTuner`
+ * - macOS: `~/Library/Application Support/SpecTuner`
+ * - Linux and other systems: `${XDG_DATA_HOME:-~/.local/share}/SpecTuner`
+ *
+ * Read `base` before SpecTuner's own `XDG_*` values are applied: the server's `XDG_DATA_HOME` points into its home.
+ * The sidecar falls back to the same folders when it runs without `SPECTUNER_HOME`.
+ */
+export function folder(
+  base: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = os.homedir(),
+) {
+  if (platform === "win32") return path.join(base.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "SpecTuner")
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "SpecTuner")
+  // The XDG specification says to ignore a relative value.
+  const xdg = base.XDG_DATA_HOME
+  return path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(home, ".local", "share"), "SpecTuner")
+}
+
+/** The packaged server's home, `<SpecTuner folder>/app` ({@link folder}). Unpackaged runs use `app-dev` beside it. */
+export function defaultHome(
+  base: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = os.homedir(),
+) {
+  return path.join(folder(base, platform, home), "app")
+}
+
+/** The sidecar program's file name: Windows needs the extension, other systems use none. */
+export function sidecarFile(platform: NodeJS.Platform = process.platform) {
+  return platform === "win32" ? "spectuner-sidecar.exe" : "spectuner-sidecar"
+}
+
+/** The .NET runtime identifier the sidecar is published for on this system and processor (`sidecar/publish.sh`). */
+export function sidecarRid(platform: NodeJS.Platform = process.platform, arch: string = process.arch) {
+  return `${platform === "win32" ? "win" : platform === "darwin" ? "osx" : platform}-${arch}`
+}
+
+/**
+ * Where `sidecar/publish.sh` writes the sidecar under the repository's `artifacts` folder: `sidecar/spectuner-sidecar.exe`
+ * on Windows, `sidecar/<rid>/spectuner-sidecar` on other systems.
+ */
+export function publishedSidecar(artifacts: string, platform: NodeJS.Platform = process.platform, arch: string = process.arch) {
+  if (platform === "win32") return path.join(artifacts, "sidecar", sidecarFile(platform))
+  return path.join(artifacts, "sidecar", sidecarRid(platform, arch), sidecarFile(platform))
 }
 
 /**
@@ -68,15 +117,22 @@ export const OWN = /^SPECTUNER_(HOME|SIDECAR|RESOURCES|TEST_GAME)$/i
  */
 export function make(input: Input): Record<string, string> {
   const base = input.base ?? process.env
-  const home = input.home ?? defaultHome(base)
+  const platform = input.platform ?? process.platform
+  const home = input.home ?? defaultHome(base, platform)
   if (!path.isAbsolute(home)) throw new Error(`home must be absolute: ${home}`)
   if (!path.isAbsolute(input.sidecar)) throw new Error(`sidecar must be absolute: ${input.sidecar}`)
   const layout = dirs(home)
   const inherited = Object.entries(base).filter(
     (entry): entry is [string, string] => entry[1] !== undefined && (OWN.test(entry[0]) || !/^(SPECTUNER_|XDG_)/i.test(entry[0])),
   )
+  // The sidecar's state folder is always set, so the sidecar never derives it from the server's XDG folders (on Linux
+  // .NET reads XDG_DATA_HOME, which points into the server's home). An inherited value (tests, scripts) is kept as is.
+  const sidecarHome: Record<string, string> = inherited.some(([key, value]) => /^SPECTUNER_HOME$/i.test(key) && value !== "")
+    ? {}
+    : { SPECTUNER_HOME: folder(base, platform) }
   return {
     ...Object.fromEntries(inherited),
+    ...sidecarHome,
     XDG_DATA_HOME: layout.data,
     XDG_CONFIG_HOME: layout.config,
     XDG_CACHE_HOME: layout.cache,

@@ -11,6 +11,9 @@ Options (all optional):
   --size N           render one PNG of N px (with --out) instead of the full set
   --out PATH         output PNG for --size
   --all              render the full deliverable set (default when --size is absent)
+  --mac              render only the macOS icon, icon.icns: the same design drawn smaller on its
+                     canvas, so the tile sits on Apple's icon grid (an 824 px tile on a 1024 px
+                     canvas) like other Mac apps. Not part of --all
   --samples N        Cycles samples per pixel (default 64; images are supersampled anyway)
   --blend-dir DIR    also save the two scenes as icon.blend and icon-small.blend in DIR, for
                      inspecting them in Blender (default: not saved). Use a scratch folder outside
@@ -21,6 +24,7 @@ With --all the script writes, next to itself:
   icon.ico                                    (16-256 px; DIB entries up to 64 px, PNG entries for 128 and 256)
   logo-mark.svg, logo-mark-color.svg          (flat mark, generated from the same constants as the 3D gauge)
   contact-sheet.png                           (review sheet; the flat marks are rendered from the SVG files)
+With --mac it writes only icon.icns (PNG entries of 16 to 1024 px, <= 32 px from the "small" variant).
 Intermediate renders go to the system temp folder and are removed afterwards.
 Every image is rendered at up to 8x its size and box-filtered down, so small sizes stay crisp.
 """
@@ -63,19 +67,20 @@ def hex_rgba(h, a=1.0):
 # ---------------------------------------------------------------- args
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    opts = {"concept": "gauge", "variant": "full", "size": None, "out": None, "all": False, "samples": 64, "blend-dir": None}
+    opts = {"concept": "gauge", "variant": "full", "size": None, "out": None, "all": False, "mac": False, "samples": 64,
+            "blend-dir": None}
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--all":
-            opts["all"] = True
+        if a in ("--all", "--mac"):
+            opts[a[2:]] = True
             i += 1
             continue
         key = a.lstrip("-")
         val = argv[i + 1]
         opts[key] = int(val) if key in ("size", "samples") else val
         i += 2
-    if opts["size"] is None:
+    if opts["size"] is None and not opts["mac"]:
         opts["all"] = True
     return opts
 
@@ -443,10 +448,13 @@ def concept_pad(small=False):
 CONCEPTS = {"gauge": concept_gauge, "dpad": concept_dpad, "chip": concept_chip, "pad": concept_pad}
 
 
-def build(concept, variant):
+def build(concept, variant, ortho=None):
     scene = reset_scene()
     CONCEPTS[concept](small=(variant == "small"))
-    setup_camera_and_lights(scene)
+    if ortho is None:
+        setup_camera_and_lights(scene)
+    else:
+        setup_camera_and_lights(scene, ortho=ortho)
     scene["drop_shadow"] = variant == "full"
     return scene
 
@@ -483,6 +491,26 @@ def save_png(arr, path):
     img.file_format = "PNG"
     img.save()
     bpy.data.images.remove(img)
+    strip_png_metadata(path)
+
+
+# Chunks that can carry text, dates or camera and machine details. Blender may write some of them.
+PNG_METADATA = {b"tEXt", b"zTXt", b"iTXt", b"eXIf", b"tIME"}
+
+
+def strip_png_metadata(path):
+    """Rewrites a PNG without its metadata chunks; image data and colour chunks are kept byte for byte."""
+    with open(path, "rb") as f:
+        data = f.read()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", path
+    out, at = [data[:8]], 8
+    while at < len(data):
+        n = struct.unpack(">I", data[at:at + 4])[0]
+        if data[at + 4:at + 8] not in PNG_METADATA:
+            out.append(data[at:at + 12 + n])
+        at += 12 + n
+    with open(path, "wb") as f:
+        f.write(b"".join(out))
 
 
 def box_down(arr, size):
@@ -569,6 +597,52 @@ def write_ico(path, entries):
         blobs += data
     with open(path, "wb") as f:
         f.write(out + blobs)
+
+
+# ---------------------------------------------------------------- ICNS (macOS)
+# PNG-compressed entries, the types macOS 10.7 and later read: each OSType names a pixel size (the @2x types are the
+# retina versions of the smaller point sizes). One PNG may serve several types.
+ICNS_TYPES = [
+    (b"icp4", 16), (b"icp5", 32), (b"icp6", 64), (b"ic07", 128), (b"ic08", 256), (b"ic09", 512), (b"ic10", 1024),
+    (b"ic11", 32), (b"ic12", 64), (b"ic13", 256), (b"ic14", 512),
+]
+# The macOS icon grid: the tile is 824 of 1024 px, centred, with room for its shadow. The full-size icon's tile is
+# 868 px of 1024 (opaque part), so the camera sees 868/824 more of the scene.
+MAC_ORTHO = 2.36 * 868 / 824
+
+
+def write_icns(path, pngs):
+    """pngs: {size: PNG bytes}. Writes an .icns file with one entry per ICNS_TYPES type."""
+    body = b""
+    for ostype, size in ICNS_TYPES:
+        data = pngs[size]
+        body += ostype + struct.pack(">I", len(data) + 8) + data
+    with open(path, "wb") as f:
+        f.write(b"icns" + struct.pack(">I", len(body) + 8) + body)
+
+
+def run_mac(o):
+    sizes = sorted({size for _, size in ICNS_TYPES})
+    icons = {}
+    scene = build(o["concept"], "small", ortho=MAC_ORTHO)
+    for s in sizes:
+        if s <= SMALL_MAX:
+            icons[s] = render_size(scene, s, o["samples"])
+    scene = build(o["concept"], "full", ortho=MAC_ORTHO)
+    for s in sizes:
+        if s > SMALL_MAX:
+            icons[s] = render_size(scene, s, o["samples"])
+    pngs = {}
+    tmp = os.path.join(tempfile.gettempdir(), f"spectuner_icon_mac_{os.getpid()}.png")
+    try:
+        for s in sizes:
+            save_png(icons[s], tmp)
+            pngs[s] = png_bytes(tmp)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    write_icns(os.path.join(HERE, "icon.icns"), pngs)
+    print("SPECTUNER_ICON_DONE")
 
 
 # ---------------------------------------------------------------- flat vector mark (SVG)
@@ -857,6 +931,9 @@ def main():
 
 
 def run(o):
+    if o["mac"]:
+        run_mac(o)
+        return
     if not o["all"]:
         scene = build(o["concept"], o["variant"])
         arr = render_size(scene, o["size"], o["samples"])

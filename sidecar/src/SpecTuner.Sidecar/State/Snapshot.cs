@@ -9,7 +9,9 @@ public sealed class Snapshot
     private const string ManifestName = "snapshot.json";
     private const string FilesDir = "files";
 
-    public bool Has(string relative) => Files.Contains(relative, GameTree.PathComparer);
+    public bool Has(string relative) => Has(relative, GameTree.PathComparer);
+
+    public bool Has(string relative, StringComparer comparer) => Files.Contains(relative, comparer);
 
     public static void Take(string gameRoot, string snapshotDir)
     {

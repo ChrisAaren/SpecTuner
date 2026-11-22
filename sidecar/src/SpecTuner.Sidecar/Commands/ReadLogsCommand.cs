@@ -42,13 +42,12 @@ public sealed class ReadLogsCommand : ICommand
             });
     }
 
-    /// <summary>Unity writes Player.log to %USERPROFILE%\AppData\LocalLow\&lt;company&gt;\&lt;product&gt;\.</summary>
+    /// <summary>Where Unity writes Player.log on this platform (Windows: %USERPROFILE%\AppData\LocalLow\&lt;company&gt;\&lt;product&gt;\; see <see cref="Platform.UserFolders.PlayerLogPath"/>).</summary>
     public static string? PlayerLogPath(GameFacts facts)
     {
         var product = facts.Product ?? facts.Name;
         if (facts.Company is null || product is null)
             return null;
-        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(profile, "AppData", "LocalLow", facts.Company, product, "Player.log");
+        return Platform.Platforms.Current.Folders.PlayerLogPath(facts.Company, product);
     }
 }

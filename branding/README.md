@@ -19,12 +19,14 @@ Two colours (orange, off-white) plus graphite neutrals. The tile keeps the mark 
 | File | What it is for |
 |---|---|
 | `icon.ico` | Windows app, installer and window icon. 16, 24, 32, 48, 64 px as 32-bit DIB entries with AND mask; 128 and 256 px as PNG entries |
+| `icon.icns` | macOS app icon. PNG entries from 16 to 1024 px (16 and 32 px from the simplified variant). The same design drawn smaller on its canvas, so the tile sits on Apple's icon grid (824 px of 1024) like other Mac apps |
 | `icon-1024.png` ... `icon-16.png` | Transparent PNGs at 1024, 512, 256, 128, 64, 48, 32, 24, 16 px. 32 px and smaller use the simplified variant |
 | `logo-mark.svg` | Flat mark for the UI, all `currentColor` (track at 35% opacity), so CSS `color` tints it. 64 x 64 viewBox |
 | `logo-mark-color.svg` | Same mark in the palette colours, for dark backgrounds (its needle is off-white) |
 | `contact-sheet.png` | Review sheet: icon at 256, 64, 32, 16 (32 and 16 also enlarged 4x) on `#16161a` and `#f2f2f4`, then the flat colour mark and the tinted mono mark at 128, 48 and 16 |
 | `make_icon.py` | Blender script that builds both scenes (full for 48 px and up, simplified for 32 px and below) from nothing and writes every file above |
 | `verify_ico.ts` | Parses `icon.ico` back, lists its entries and checks each one |
+| `verify_icns.ts` | Parses `icon.icns` back, checks each entry's type, size and format, and that no PNG carries metadata |
 
 ## Regenerate
 
@@ -33,7 +35,12 @@ From Git Bash in this folder (about 40 seconds on CPU):
 ```sh
 blender -b --factory-startup -P make_icon.py -- --all
 bun verify_ico.ts
+blender -b --factory-startup -P make_icon.py -- --mac   # the macOS icon, icon.icns (not part of --all)
+bun verify_icns.ts
 ```
+
+Every PNG the script writes (the files above and the PNGs inside `icon.icns`) has Blender's metadata chunks removed
+(text, time and EXIF chunks), so no file records details of the machine that made it.
 
 `blender` is Blender 5.2 or later (use the full path to `blender.exe` if it is not on `PATH`). Intermediate renders go to the system temp folder and are deleted afterwards.
 
@@ -51,6 +58,8 @@ blender -b --factory-startup -P make_icon.py -- \
 ## Where the app uses these files
 
 - `icon.ico` is copied to `app/packages/desktop/icons/<channel>/icon.ico` (`dev`, `beta`, `prod`, the same file in each). The desktop build uses it for the exe, the installer, the window and the taskbar.
+- `icon.icns` is copied to `app/packages/desktop/icons/<channel>/icon.icns` (macOS app and dmg).
+- `icon-16.png` ... `icon-512.png` are copied to `app/packages/desktop/icons/<channel>/16x16.png` ... `512x512.png` (Linux icon theme), and `icon-512.png` also to `icon.png` (Linux window icon).
 - `icon-128.png` is the notification icon (`app/packages/desktop/src/renderer/platform/notification-icon.png`).
 - The favicons and app icons in `app/packages/app/public` and `app/packages/ui/src/assets/favicon` were resized from `icon-1024.png`.
 - `logo-mark.svg` and `logo-mark-color.svg` are copied to `app/packages/ui/src/assets/logo/`; the UI's logo components draw the same paths.

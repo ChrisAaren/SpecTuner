@@ -9,23 +9,19 @@ import { SpecTunerEnv } from "../src/env.ts"
 export const PACKAGE_DIR = path.resolve(import.meta.dir, "..")
 export const PLUGIN_DIR = path.join(PACKAGE_DIR, "plugin")
 export const CLI_DIR = path.resolve(PACKAGE_DIR, "..", "cli")
-/** Where the other engineer publishes the sidecar, relative to this checkout (`<harness>/<app folder>/packages/modder`). */
-export const DEFAULT_SIDECAR = path.resolve(
-  PACKAGE_DIR,
-  "..",
-  "..",
-  "..",
-  "artifacts",
-  "sidecar",
-  "spectuner-sidecar.exe",
-)
+/**
+ * Where `sidecar/publish.sh` writes the sidecar for this system, relative to this checkout
+ * (`<repository>/app/packages/modder`): `artifacts/sidecar/spectuner-sidecar.exe` on Windows,
+ * `artifacts/sidecar/<rid>/spectuner-sidecar` elsewhere.
+ */
+export const DEFAULT_SIDECAR = SpecTunerEnv.publishedSidecar(path.resolve(PACKAGE_DIR, "..", "..", "..", "artifacts"))
 
 export interface Options {
   /** Server home (XDG dirs live under it). */
   readonly home: string
   readonly sidecar: string
   readonly pluginDir?: string
-  /** A compiled `spectuner.exe`. Without it the CLI runs from source with this Bun. */
+  /** A compiled server program (`spectuner.exe` on Windows, `spectuner` elsewhere). Without it the CLI runs from source with this Bun. */
   readonly exe?: string
   readonly port?: number
   /** Extra variables on top of the SpecTuner environment (for example `SPECTUNER_HOME`). */

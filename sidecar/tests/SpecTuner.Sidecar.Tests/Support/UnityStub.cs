@@ -47,7 +47,22 @@ public static class UnityStub
                 public static string unityVersion { get { return "6000.0.0f1"; } }
                 public static void Quit() { }
                 public static void OpenURL(string url) { }
+                public static void CaptureScreenshot(string filename) { }
+                public static object RequestUserAuthorization(int mode) { return null; }
             }
+            public static class ScreenCapture { public static void CaptureScreenshot(string filename) { } }
+            public class AssetBundle
+            {
+                public static AssetBundle LoadFromFile(string path) { return null; }
+                public static object LoadFromFileAsync(string path) { return null; }
+            }
+            public static class Caching { public static bool ClearCache() { return true; } }
+            public sealed class Ping { public Ping(string address) { } }
+            public static class Network { public static void Disconnect() { } }
+            public sealed class NetworkView { }
+            public static class MasterServer { public static void ClearHostList() { } }
+            public sealed class WebCamTexture { }
+            public static class Microphone { public static string[] devices { get { return new string[0]; } } }
             public class WWW { public WWW(string url) { } }
             public class WWWForm { }
             public enum ShadowQuality { Disable, HardOnly, All }
@@ -99,6 +114,15 @@ public static class UnityStub
         }
         namespace UnityEngine.Networking { public class UnityWebRequest { public static UnityWebRequest Get(string uri) { return null; } } }
         namespace UnityEngine.Rendering { public enum GraphicsDeviceType { Direct3D11 } }
+        namespace UnityEngine.Windows
+        {
+            public static class File { public static byte[] ReadAllBytes(string path) { return null; } }
+            public static class Directory { public static void CreateDirectory(string path) { } }
+        }
+        namespace UnityEngine.Windows.WebCam { public sealed class PhotoCapture { } }
+        namespace UnityEngine.Windows.Speech { public sealed class DictationRecognizer { } }
+        namespace UnityEngine.Profiling { public static class Profiler { public static string logFile { get; set; } } }
+        namespace UnityEngine.Diagnostics { public static class Utils { public static void ForceCrash(int mode) { } } }
         namespace UnityEngine.Events { public delegate void UnityAction<T0, T1>(T0 arg0, T1 arg1); }
         namespace UnityEngine.SceneManagement
         {

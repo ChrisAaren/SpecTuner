@@ -1,0 +1,68 @@
+# Smoke test on GitHub's Linux, macOS and Windows machines: does SpecTuner build there, and does the packaged app
+# start? This is the only workflow, and that is all the runners are used for.
+#
+# Who can run it: only the repository's owner, from Actions > Smoke test > Run workflow. A run started by anyone else
+# is skipped. Nothing runs for a push or a pull request.
+#
+# What it keeps: nothing. No build can be downloaded from a run, and no workflow publishes a release.
+#
+# Cost: the jobs are free only while this repository is public and only on GitHub's standard runners (ubuntu-24.04,
+# macos-15, windows-latest). Every job is skipped if the repository is made private, has a time limit, and a newer
+# run of the same branch cancels an older one.
+name: Smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.system }})
+    # Skips a run that someone other than the repository's owner started, and every run once the repository is
+    # private.
+    if: ${{ github.event.repository.visibility == 'public' && github.triggering_actor == github.repository_owner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-24.04
+          - system: mac
+            runner: macos-15
+          - system: windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.5"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install dependencies
+        working-directory: app
+        run: bun install --frozen-lockfile
+
+      - name: Build and package
+        run: ./build.sh
+
+      # Prints what was built and runs the automated checks: the server program's --version, the sidecar's detect on
+      # an empty folder, the server, plugin and sidecar together, the packaged app started until its server asks for
+      # the password, and on macOS the ad hoc signatures.
+      - name: Check the build
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-build.sh --start-app

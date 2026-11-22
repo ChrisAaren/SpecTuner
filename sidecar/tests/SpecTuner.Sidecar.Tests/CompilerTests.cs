@@ -69,8 +69,8 @@ public sealed class CompilerTests : SidecarTest
     public void GameReferences_SkipNativeDlls_AndKeepOneCopyPerAssemblyName()
     {
         var game = CreateGame();
-        game.Write($"{game.Name}_Data/Managed/native_plugin.dll", PeBuilder.Build());
-        game.Write($"{game.Name}_Data/Managed/Copy-Of-Assembly-CSharp.dll", GameFixture.ManagedAssembly());
+        game.Write($"{game.DataRelative}/Managed/native_plugin.dll", PeBuilder.Build());
+        game.Write($"{game.DataRelative}/Managed/Copy-Of-Assembly-CSharp.dll", GameFixture.ManagedAssembly());
         var facts = GameInspector.Inspect(game.Root).Facts;
 
         var references = PluginCompiler.GameReferences(facts);

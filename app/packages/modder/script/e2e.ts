@@ -11,7 +11,13 @@ import { SpecTunerEnv } from "../src/env.ts"
 import { SpecTunerServer } from "./server.ts"
 
 export const HARNESS_DIR = path.resolve(SpecTunerServer.PACKAGE_DIR, "..", "..", "..")
-export const STAGED_CLI = path.resolve(SpecTunerServer.PACKAGE_DIR, "..", "desktop", "resources", "spectuner-server.exe")
+export const STAGED_CLI = path.resolve(
+  SpecTunerServer.PACKAGE_DIR,
+  "..",
+  "desktop",
+  "resources",
+  process.platform === "win32" ? "spectuner-server.exe" : "spectuner-server",
+)
 
 export interface Options {
   readonly game: string

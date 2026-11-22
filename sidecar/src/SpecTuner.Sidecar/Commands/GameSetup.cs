@@ -30,7 +30,7 @@ public static class GameSetup
         var baselineCreated = baseline is null;
         if (baseline is null)
         {
-            baseline = Baseline.Capture(facts.FullPath);
+            baseline = Baseline.Capture(facts.FullPath, Platform.Platforms.Current.PathsAreCaseSensitive(facts.FullPath));
             state.SaveBaseline(baseline);
         }
 

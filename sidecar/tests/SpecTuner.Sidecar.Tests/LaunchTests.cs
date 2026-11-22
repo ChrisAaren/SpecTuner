@@ -122,6 +122,7 @@ public sealed class LaunchTests : SidecarTest
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows, IgnoreMessage = "Windows job object; Linux and macOS have KilledSidecar_GameIsClosedByTheNextCommand and StoppedSidecar_ClosesTheGame.")]
     public void KillingTheSidecar_KillsTheGameToo()
     {
         var game = CreateGame().UseFakeGameExe();
@@ -164,6 +165,66 @@ public sealed class LaunchTests : SidecarTest
         Assert.AreEqual(1, data.GetProperty("lines").GetArrayLength());
         Assert.AreEqual(1, data.GetProperty("errorCount").GetInt32());
         AssertRefused(Run("read-logs", new { gamePath = game.Root, source = "steam" }), "BAD_REQUEST");
+    }
+
+    /// <summary>Starts the real sidecar on a hanging fake game and waits until the game runs.</summary>
+    private static Process StartSidecarOnHangingGame(GameFixture game)
+    {
+        FakeGame("hang");
+        var start = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
+        };
+        start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "spectuner-sidecar.dll"));
+        start.ArgumentList.Add("launch-and-benchmark");
+        var sidecar = Process.Start(start)!;
+        sidecar.StandardInput.Write(JsonSerializer.Serialize(Benchmark(game, startup: 120)));
+        sidecar.StandardInput.Close();
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (!Running(game) && DateTime.UtcNow < deadline)
+            Thread.Sleep(200);
+        Assert.IsTrue(Running(game), "the fake game should have started");
+        return sidecar;
+    }
+
+    private static void WaitUntilStopped(GameFixture game, int seconds)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (Running(game) && DateTime.UtcNow < deadline)
+            Thread.Sleep(200);
+    }
+
+    [TestMethod]
+    [OSCondition(OperatingSystems.Linux | OperatingSystems.OSX, IgnoreMessage = "No job objects on Linux and macOS; Windows has KillingTheSidecar_KillsTheGameToo.")]
+    public void KilledSidecar_GameIsClosedByTheNextCommand()
+    {
+        var game = CreateGame().UseFakeGameExe();
+        using var sidecar = StartSidecarOnHangingGame(game);
+        var guard = SpecTuner.Sidecar.State.GameState.For(game.Root).RunningGamePath;
+        Assert.IsTrue(File.Exists(guard), "the measured game is recorded");
+
+        sidecar.Kill(); // SIGKILL: no handler runs
+        sidecar.WaitForExit();
+        FakeGame("result");
+
+        // The next command that needs the game closed closes the leftover one instead of refusing.
+        AssertOk(Run("launch-and-benchmark", Benchmark(game)));
+        Assert.IsFalse(File.Exists(guard));
+        Assert.IsFalse(Running(game));
+    }
+
+    [TestMethod]
+    [OSCondition(OperatingSystems.Linux | OperatingSystems.OSX, IgnoreMessage = "Signal handlers are the Linux and macOS guard; Windows uses a job object.")]
+    public void StoppedSidecar_ClosesTheGame()
+    {
+        var game = CreateGame().UseFakeGameExe();
+        using var sidecar = StartSidecarOnHangingGame(game);
+
+        using (var kill = Process.Start("kill", ["-TERM", sidecar.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)]))
+            kill.WaitForExit();
+        sidecar.WaitForExit(10000);
+        WaitUntilStopped(game, 10);
+        Assert.IsFalse(Running(game), "SIGTERM to the sidecar must close the game");
     }
 
     private static bool Running(GameFixture game) => SpecTuner.Sidecar.Games.GameProcesses.IsRunning(game.ExePath);

@@ -1,7 +1,10 @@
 // Stand-in for a game in launch tests. Behaviour comes from environment variables
 // inherited from the test process:
-//   SPECTUNER_FAKE_GAME = result (default) | crash | hang
+//   SPECTUNER_FAKE_GAME = result (default) | crash | hang | linger (writes to stdout for 8 s, then exits)
 //   SPECTUNER_FAKE_GAME_FPS = average FPS to report (default 100)
+//   SPECTUNER_FAKE_GAME_LAUNCH_FILE = a file (outside the game folder) to record the arguments and the
+//                                     loader's environment variables in, at start
+// Without a benchmark request (started by "play") "result" mode just exits.
 //   SPECTUNER_FAKE_GAME_LOG_EXTRA = extra BepInEx log lines, separated by newlines
 //   SPECTUNER_FAKE_GAME_TRIAL_FPS = comma-separated FPS of the B windows of a trial, one per pair
 //                                   (default: every B window = SPECTUNER_FAKE_GAME_FPS)
@@ -18,7 +21,30 @@ using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+// The game root: the program's folder, or on macOS the folder holding <Name>.app (the program is in Contents/MacOS).
 var root = AppContext.BaseDirectory;
+var bundle = Path.TrimEndingDirectorySeparator(root);
+if (bundle.EndsWith(Path.Combine("Contents", "MacOS"), StringComparison.Ordinal))
+    root = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(bundle)!)!)!;
+
+// SPECTUNER_FAKE_GAME_LAUNCH_FILE: write the arguments and the loader's environment variables there (outside the game folder).
+var launchFile = Environment.GetEnvironmentVariable("SPECTUNER_FAKE_GAME_LAUNCH_FILE");
+if (!string.IsNullOrEmpty(launchFile))
+{
+    var environment = new JsonObject();
+    foreach (var name in new[] { "DOORSTOP_ENABLED", "DOORSTOP_TARGET_ASSEMBLY", "DOORSTOP_IGNORE_DISABLED_ENV", "DOORSTOP_CLR_RUNTIME_CORECLR_PATH",
+                 "LD_PRELOAD", "LD_LIBRARY_PATH", "ARCHPREFERENCE", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH" })
+        environment[name] = Environment.GetEnvironmentVariable(name);
+    var launch = new JsonObject
+    {
+        ["args"] = new JsonArray(args.Select(a => (JsonNode?)JsonValue.Create(a)).ToArray()),
+        ["environment"] = environment,
+        ["root"] = root,
+    };
+    File.WriteAllText(launchFile + ".tmp", launch.ToJsonString());
+    File.Move(launchFile + ".tmp", launchFile, overwrite: true);
+}
+
 var mode = Environment.GetEnvironmentVariable("SPECTUNER_FAKE_GAME") ?? "result";
 switch (mode)
 {
@@ -27,9 +53,19 @@ switch (mode)
     case "hang":
         Thread.Sleep(Timeout.Infinite);
         return 0;
+    case "linger": // a game the player plays for a few seconds, writing to its output as games do
+        for (var i = 0; i < 16; i++)
+        {
+            Console.WriteLine($"fake game frame {i}");
+            Thread.Sleep(500);
+        }
+        return 0;
 }
 
 var requestPath = Path.Combine(root, "BepInEx", "config", "spectuner.benchmark.json");
+// Started by "play": no benchmark was asked for, so behave like a game the player closes at once.
+if (!File.Exists(requestPath))
+    return 0;
 using var request = JsonDocument.Parse(File.ReadAllText(requestPath));
 var runId = request.RootElement.GetProperty("runId").GetString()!;
 File.Delete(requestPath);

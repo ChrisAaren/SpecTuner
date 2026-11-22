@@ -92,7 +92,7 @@ namespace SpecTunerMods.Example
 6. Finish in two or three plain sentences, with no code, no log lines, no tool names and no change ids:
    - what changed;
    - what was confirmed. Value change: the game applied it when it started. New behaviour: the mod loaded without errors, but you cannot press keys, so the player has to try it;
-   - how to try it: start the game as usual, and for a behaviour say which key to hold or press;
+   - how to try it: press Play in the Changes list, and for a behaviour say which key to hold or press;
    - that it can be undone from the Changes list, and to tell you if it does not work.
 7. If the player says a change does not work: call game_read_logs with filter set to the mod display name to see which of its lines appeared in their last run, read the game code again if you need to, fix the mod, and build it again under the SAME name so it replaces the old one.
 

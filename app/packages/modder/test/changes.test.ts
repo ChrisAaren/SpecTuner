@@ -214,6 +214,61 @@ describe("SpecTunerChanges.undo and restore", () => {
   })
 })
 
+describe("SpecTunerChanges.play", () => {
+  test("starts the game with the changes and returns the sidecar's sentence", async () => {
+    const fake = useFake("ledger")
+
+    expect(await SpecTunerChanges.play(fake.options, true)).toEqual({
+      ok: true,
+      message: "Started Ledger Game with your changes.",
+      steamLaunchOption: null,
+      note: null,
+    })
+    expect((await calls(fake.log)).map((call) => [call.command, call.request])).toEqual([
+      ["play", { withChanges: true, gamePath: GAME }],
+    ])
+  })
+
+  test("starts the game without the changes", async () => {
+    const fake = useFake("ledger")
+
+    expect(await SpecTunerChanges.play(fake.options, false)).toEqual({
+      ok: true,
+      message: "Started Ledger Game without SpecTuner's changes.",
+      steamLaunchOption: null,
+      note: null,
+    })
+    expect((await calls(fake.log)).map((call) => call.request)).toEqual([{ withChanges: false, gamePath: GAME }])
+  })
+
+  test("passes on the Steam launch option and the note when the sidecar gives them", async () => {
+    expect(await SpecTunerChanges.play(useFake("play-steam").options, true)).toEqual({
+      ok: true,
+      message: "Started My Game with your changes.",
+      steamLaunchOption: '"/games/run_bepinex.sh" %command%',
+      note: "If you start the game from Steam, Steam may start it without your changes until you set the launch option.",
+    })
+  })
+
+  test("a refusal returns the sidecar's plain message, with nothing to paste", async () => {
+    expect(await SpecTunerChanges.play(useFake("game-running").options, true)).toEqual({
+      ok: false,
+      message: "The game is already running. Close it first, then try again.",
+      steamLaunchOption: null,
+      note: null,
+    })
+  })
+
+  test("a missing helper is a plain message, not a failure", async () => {
+    useFake()
+    const missing = path.join(os.tmpdir(), "spectuner-does-not-exist", "spectuner-sidecar.exe")
+    const result = await SpecTunerChanges.play({ game: GAME, exe: () => missing }, true)
+
+    expect(result).toMatchObject({ ok: false, steamLaunchOption: null, note: null })
+    expect(result.message).toMatch(/helper program was not found/)
+  })
+})
+
 describe("SpecTunerChanges.reapply", () => {
   test("puts a past change back through the sidecar's reapply and returns its sentence", async () => {
     const fake = useFake("ledger")

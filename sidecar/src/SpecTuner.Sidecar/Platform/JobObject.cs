@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace SpecTuner.Sidecar.Benchmark;
+namespace SpecTuner.Sidecar.Platform;
 
 /// <summary>
 /// A Windows job object with "kill on close": when the handle closes, including

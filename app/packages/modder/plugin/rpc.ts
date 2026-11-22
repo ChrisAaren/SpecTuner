@@ -72,6 +72,17 @@ export type Status = typeof Status.Type
 export const Result = Schema.Struct({ ok: Schema.Boolean, message: Schema.String })
 export type Result = typeof Result.Type
 
+/** The outcome of "Play": the sidecar's summary or plain refusal, plus what the player should know about starting it. */
+export const PlayResult = Schema.Struct({
+  ok: Schema.Boolean,
+  message: Schema.String,
+  /** Text to paste into the game's launch options in Steam, so starting from Steam also applies the changes, else null. */
+  steamLaunchOption: Schema.NullOr(Schema.String),
+  /** One plain sentence the player should read, else null. */
+  note: Schema.NullOr(Schema.String),
+})
+export type PlayResult = typeof PlayResult.Type
+
 export const Definition = {
   id: "spectuner.changes",
   methods: {
@@ -91,6 +102,11 @@ export const Definition = {
     reapply: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ changeId: Schema.String })),
       output: Schema.toStandardSchemaV1(Result),
+    },
+    /** "Play": starts the game for the player, with or without SpecTuner's changes, and returns at once. */
+    play: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ withChanges: Schema.Boolean })),
+      output: Schema.toStandardSchemaV1(PlayResult),
     },
   },
   events: {

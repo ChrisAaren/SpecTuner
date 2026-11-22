@@ -10,6 +10,7 @@ import {
 } from "../../shared/ipc-rpc/events"
 import { emitIpcEvent } from "../ipc-events"
 import { devToolsEnabled } from "./devtools"
+import { windowIconFile } from "./icon"
 import type { DesktopPaths } from "../paths"
 import { BACKGROUND_COLOR_KEY, PINCH_ZOOM_ENABLED_KEY, ZOOM_LEVEL_KEY } from "../storage/keys"
 import { getStore } from "../storage/store"
@@ -142,12 +143,13 @@ export function wireFocus(win: BrowserWindow) {
   win.on("blur", () => send(false))
 }
 
-// Packaged: `<resources>/icons/icon.ico`, which electron-builder.config.ts copies out of app.asar. Unpackaged: the
-// folder script/copy-icons.ts fills. Keep in sync with createEarlyWindow (early.ts).
+// Packaged: `<resources>/icons/<windowIconFile()>`, which electron-builder.config.ts copies out of app.asar. Unpackaged:
+// the folder script/copy-icons.ts fills. Keep in sync with createEarlyWindow (early.ts). None on macOS.
 function iconPath(path: Path.Path, paths: DesktopPaths.Resolved) {
   const dir = app.isPackaged ? path.join(process.resourcesPath, "icons") : path.join(paths.developmentResourcesRoot, "icons")
+  const file = windowIconFile()
 
-  return path.join(dir, "icon.ico")
+  return file ? path.join(dir, file) : undefined
 }
 
 function overlay(theme: Partial<TitlebarTheme> = {}, zoom = 1) {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using SpecTuner.Sidecar.Games;
+using SpecTuner.Sidecar.Platform;
 using SpecTuner.Sidecar.State;
 
 namespace SpecTuner.Sidecar.Benchmark;
@@ -59,8 +60,12 @@ public static class GameLauncher
                 },
             });
 
-            using var job = new JobObject();
-            var start = new ProcessStartInfo(facts.ExePath!)
+            var platform = Platforms.Current;
+            // Windows: a kill-on-close job object. Linux/macOS: signal handlers plus a guard file.
+            using var job = platform.Processes.CreateGuard(GameState.For(root).RunningGamePath);
+            // Windows: the plain program (winhttp.dll loads the loader). Linux/macOS: what run_bepinex.sh would run.
+            var spec = platform.Loader.WithLoader(facts, Environment.GetEnvironmentVariable);
+            var start = new ProcessStartInfo(spec.FileName)
             {
                 WorkingDirectory = root,
                 UseShellExecute = false,
@@ -69,6 +74,10 @@ public static class GameLauncher
                 RedirectStandardError = true,
                 RedirectStandardInput = true,
             };
+            foreach (var argument in spec.Arguments)
+                start.ArgumentList.Add(argument);
+            foreach (var (key, value) in spec.Environment)
+                start.Environment[key] = value;
             Process process;
             try
             {

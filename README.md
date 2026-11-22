@@ -139,7 +139,8 @@ screen or menu. Busy moments in play can behave differently.
 3. It checks the mod for unsafe code, builds it, and starts the game once to
    confirm the mod loads without errors. The game window opens and closes by
    itself.
-4. It tells you what changed and how to try it.
+4. It tells you what changed and how to try it. The quickest way is the
+   **Play** button in the Changes panel (see "Playing the game" below).
 
 SpecTuner cannot press keys or play the game. For a changed value such as
 jump height, it can see in the game's log that the new value was applied. For
@@ -178,6 +179,17 @@ this game.
 Start the game the way you always do, from Steam, another store, or its
 shortcut. Nothing else is needed. The mod loader starts with the game and
 applies your changes.
+
+You can also start it from the **Changes** panel:
+
+- **Play** starts the game with SpecTuner's changes.
+- **Play without changes** starts the game as it was, with the mod loader
+  switched off for that one run. No file is changed, and your changes are
+  back the next time you start the game. Use it to compare, or to check
+  whether a problem comes from a change. It appears once SpecTuner has made
+  a change.
+
+Close the game before you ask SpecTuner for the next change.
 
 Graphics settings that SpecTuner saved take priority over the game's own
 settings menu for those settings. To change one of them in the game's menu
@@ -260,12 +272,32 @@ folder except what Restore game removes.
 
 ## Limits
 
-- Windows only. Built and tested on Windows 11.
+- Windows only for now. Built and tested on Windows 11. Linux and Mac
+  versions are for testers only; see "Linux and Mac: early test builds" below.
 - Unity games built the usual way, called Mono, only. IL2CPP games are
   declined for now.
 - Tested on very few games so far. Expect some games not to work.
 - English only.
 - There is no support channel yet.
+
+## Linux and Mac: early test builds
+
+**Not ready for players.** SpecTuner can be built for Linux PCs (64-bit Intel
+or AMD) and for Macs with Apple Silicon, and there is nothing to download
+yet. These builds are meant for testers who want to help find out whether
+SpecTuner can work there, and who build the app themselves. Nobody has used
+it with a real game on a real Linux PC or Mac yet, so it may not work at all.
+
+- It is made only for games that have a native Linux or Mac version. The
+  Windows version of a game, run through Proton or Wine, is declined.
+- On Linux and on a Mac, the mod loader does not start by itself with the
+  game. SpecTuner starts it when you use **Play**. Starting a Steam game from
+  Steam needs a launch option pasted into Steam once; SpecTuner shows the
+  text.
+- The Mac build is not signed by Apple, so macOS warns before opening it.
+
+To try it, build the app on your own computer: see "Set up from a fresh
+clone" in [CLAUDE.md](CLAUDE.md).
 
 ## For developers
 

@@ -136,7 +136,7 @@ public static partial class LogReader
         }
         var user = Environment.UserName;
         if (user.Length > 2)
-            line = Regex.Replace(line, @"([\\/]Users[\\/])" + Regex.Escape(user) + @"(?=[\\/])", "$1%USERNAME%", RegexOptions.IgnoreCase);
+            line = Regex.Replace(line, @"([\\/](?:Users|home)[\\/])" + Regex.Escape(user) + @"(?=[\\/])", "$1%USERNAME%", RegexOptions.IgnoreCase);
         line = line.TrimEnd();
         return line.Length > MaxLineLength ? line[..MaxLineLength] + "..." : line;
     }

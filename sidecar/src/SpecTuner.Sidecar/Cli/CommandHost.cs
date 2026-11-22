@@ -18,6 +18,8 @@ public static class CommandHost
         new ReadCodeCommand(),
         new BuildPluginCommand(),
         new ReapplyCommand(),
+        new PlayCommand(),
+        new DiagnoseCommand(),
     ];
 
     /// <summary>

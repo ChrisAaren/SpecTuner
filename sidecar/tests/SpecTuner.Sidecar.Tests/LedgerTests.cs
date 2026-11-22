@@ -165,7 +165,7 @@ public sealed class LedgerTests : SidecarTest
     [TestMethod]
     public void Ledger_RefusesToTouchAnOriginalGameFile()
     {
-        var original = $"{_game.Name}_Data/level0";
+        var original = $"{_game.DataRelative}/level0";
         var before = File.ReadAllBytes(_game.Full(original));
         var ledger = Ledger.Load(_state, _baseline);
         var change = ledger.Begin(ChangeKinds.Mod, "Bad", "test");

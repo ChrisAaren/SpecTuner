@@ -96,7 +96,9 @@ function ChangesBody(props: { session: MountedSession; directory: string }) {
         ? () => rpc().undo({ changeId: effect.changeId }, options())
         : effect.type === "reapply"
           ? () => rpc().reapply({ changeId: effect.changeId }, options())
-          : () => rpc().restore({}, options())
+          : effect.type === "play"
+            ? () => rpc().play({ withChanges: effect.withChanges }, options())
+            : () => rpc().restore({}, options())
 
     void Promise.try(request).then(
       (result) => dispatch({ type: "action.done", attempt, result }),
@@ -172,18 +174,49 @@ function ChangesBody(props: { session: MountedSession; directory: string }) {
                   </p>
                 </div>
 
+                {/* Starting the game from here applies the changes on every system; "without" is for comparing. */}
+                <Show when={ready().canPlay}>
+                  <div class="flex flex-wrap items-center gap-2" data-slot="spectuner-changes-play">
+                    <Button
+                      data-action="spectuner-play"
+                      variant="contrast"
+                      size="normal"
+                      disabled={ready().busy}
+                      onClick={() => dispatch({ type: "play", withChanges: true })}
+                    >
+                      {ready().playing === "with" ? ctx.t("play.starting") : ctx.t("play")}
+                    </Button>
+                    <Show when={ready().canPlayWithout}>
+                      <Button
+                        data-action="spectuner-play-without"
+                        variant="ghost"
+                        size="normal"
+                        disabled={ready().busy}
+                        onClick={() => dispatch({ type: "play", withChanges: false })}
+                      >
+                        {ready().playing === "without" ? ctx.t("play.starting") : ctx.t("play.without")}
+                      </Button>
+                    </Show>
+                  </div>
+                </Show>
+
                 <Show when={ready().notice}>
                   {(notice) => (
                     <div
                       role="status"
                       data-slot="spectuner-changes-notice"
-                      class="flex items-start gap-2 rounded-[8px] border border-v2-border-border-muted bg-v2-background-bg-layer-01 px-3 py-2 text-[13px] leading-5"
+                      class="flex flex-col gap-2 rounded-[8px] border border-v2-border-border-muted bg-v2-background-bg-layer-01 px-3 py-2 text-[13px] leading-5"
                       classList={{ "text-v2-text-text-base": notice().ok, "text-v2-state-fg-danger": !notice().ok }}
                     >
-                      <span class="min-w-0 flex-1">{notice().message}</span>
-                      <Button variant="ghost" size="small" onClick={() => dispatch({ type: "notice.dismiss" })}>
-                        {ctx.t("dismiss")}
-                      </Button>
+                      <div class="flex items-start gap-2">
+                        <span class="min-w-0 flex-1">{notice().message}</span>
+                        <Button variant="ghost" size="small" onClick={() => dispatch({ type: "notice.dismiss" })}>
+                          {ctx.t("dismiss")}
+                        </Button>
+                      </div>
+                      {/* After "Play": the sidecar's note, and on Linux or macOS the text to paste into Steam. */}
+                      <Show when={notice().note}>{(note) => <span>{note()}</span>}</Show>
+                      <Show when={notice().steamLaunchOption}>{(option) => <SteamLaunchOption text={option()} />}</Show>
                     </div>
                   )}
                 </Show>
@@ -324,6 +357,41 @@ function ChangesBody(props: { session: MountedSession; directory: string }) {
           </div>
         )}
       </Show>
+    </div>
+  )
+}
+
+/**
+ * The text a player pastes into the game's launch options in Steam, so starting from Steam also applies the changes.
+ * The box selects all of it on focus; Copy puts it on the clipboard.
+ */
+function SteamLaunchOption(props: { text: string }) {
+  const ctx = usePlugin<typeof Changes>()
+  const [copied, setCopied] = createSignal(false)
+
+  const copy = () =>
+    void Promise.try(() => ctx.system.copy(props.text)).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    )
+
+  return (
+    <div class="flex flex-col gap-1.5 text-v2-text-text-base" data-slot="spectuner-changes-steam">
+      <span class="text-v2-text-text-muted">{ctx.t("play.steam")}</span>
+      <div class="flex items-center gap-2">
+        <input
+          readonly
+          data-slot="spectuner-changes-steam-option"
+          aria-label={ctx.t("play.steam.label")}
+          value={props.text}
+          class="min-w-0 flex-1 rounded-[6px] border border-v2-border-border-muted bg-v2-background-bg-base px-2 py-1 font-mono text-[12px] leading-4 text-v2-text-text-base outline-none focus-visible:shadow-[0_0_0_1px_var(--v2-border-border-focus)]"
+          onFocus={(event) => event.currentTarget.select()}
+          onClick={(event) => event.currentTarget.select()}
+        />
+        <Button data-action="spectuner-steam-copy" variant="neutral" size="small" onClick={copy}>
+          {copied() ? ctx.t("play.copied") : ctx.t("play.copy")}
+        </Button>
+      </div>
     </div>
   )
 }

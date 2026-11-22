@@ -52,6 +52,8 @@ public sealed class GameState
     public string SnapshotsDir => Path.Combine(Dir, "snapshots");
     public string BenchmarksPath => Path.Combine(Dir, "benchmarks.json");
     public string HistoryPath => Path.Combine(Dir, "history.json");
+    /// <summary>Linux and macOS: the game a measured run started, so a killed sidecar's game can be closed by the next command.</summary>
+    public string RunningGamePath => Path.Combine(Dir, "running.json");
 
     private GameState(string gamePath)
     {

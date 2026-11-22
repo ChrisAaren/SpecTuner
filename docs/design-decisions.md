@@ -26,10 +26,11 @@ interface is in [sidecar-contract.md](sidecar-contract.md).
 
 ### The sidecar decides what is in scope
 
-Every sidecar command except `detect` runs the same scope gate first and
-refuses with one error code when the game is out of scope: not found, not
-Unity, IL2CPP, not Windows x64, anti-cheat, protected code, or online
-multiplayer. The pattern tables are in
+Every sidecar command except `detect` and `diagnose` runs the same scope gate
+first and refuses with one error code when the game is out of scope: not
+found, a Windows game meant for Proton or Wine, not Unity, IL2CPP, the wrong
+architecture, anti-cheat, protected code, a macOS app that keeps the loader
+out, or online multiplayer. The pattern tables are in
 `sidecar/src/SpecTuner.Sidecar/Games/Signatures.cs`; the order and details of
 the checks are in the contract.
 
@@ -45,6 +46,35 @@ did.
 Unity sign-in, cloud save and analytics libraries and Steamworks.NET do not
 count as online multiplayer, because many single-player games ship them.
 
+### Native Linux and macOS games are in scope, untested by players
+
+SpecTuner started as Windows x64 only. The scope now also covers native Unity
+Mono games on Linux x64 and on macOS with Apple Silicon. Windows remains the
+finished system, tested with a real game; Linux and macOS support is written and
+covered by automated tests, and stays labelled untested until testers report
+on real machines.
+
+**Why.** Many Unity games ship native Linux and macOS versions, and BepInEx 5
+publishes official packages for both, so the same design (an unmodified
+loader next to the game, mods compiled against the game's own assemblies)
+carries over. What differs is small enough to isolate (see "Platform
+differences live in one place"). **Cost.** The development machine runs only
+Windows, so nothing Linux- or macOS-specific can be checked there on a real
+game. Every claim about those systems needs a test or a tester's report.
+
+### Windows games through Proton or Wine are declined
+
+On Linux and macOS, a folder with a Windows game (`.exe` with a `_Data`
+folder) and no native game gets `COMPATIBILITY_LAYER_NOT_SUPPORTED`.
+
+**Why.** SpecTuner works with games native to the system it runs on. A game
+inside a compatibility layer is started by that layer, not by SpecTuner, so
+neither the Windows way of loading BepInEx (the game finds `winhttp.dll`) nor
+the Linux and macOS way (SpecTuner starts the game with the loader's
+environment) is known to apply, and nothing here can test it. A clear refusal
+is better than a change that may silently do nothing. It can be revisited
+once the native path is proven.
+
 ### IL2CPP is deferred
 
 IL2CPP games are declined today with `IL2CPP_NOT_SUPPORTED`. The design keeps
@@ -56,7 +86,9 @@ with code mods later through Il2CppInterop and Cpp2IL.
 ### State lives outside the game folder
 
 Snapshots, the baseline manifest, the change ledger, history, mod sources and
-the decompile cache live under `%LOCALAPPDATA%\SpecTuner\games\<id>\`.
+the decompile cache live under `%LOCALAPPDATA%\SpecTuner\games\<id>\` (macOS
+`~/Library/Application Support/SpecTuner`, Linux
+`${XDG_DATA_HOME:-~/.local/share}/SpecTuner`).
 Inside the game folder SpecTuner writes only BepInEx and its own files under
 it.
 
@@ -96,9 +128,11 @@ settings menu for that key until the player undoes the change.
 
 ### BepInEx 5, bundled unmodified
 
-SpecTuner bundles BepInEx 5.4.23.6 for Windows x64 as the unmodified upstream
-zip, embedded in the sidecar and installed per game. The zip's SHA-256 is
-recorded in `THIRD_PARTY_NOTICES.md`. Its `changelog.txt` is never extracted,
+SpecTuner bundles BepInEx 5.4.23.6 as the unmodified upstream zips for
+Windows x64, Linux x64 and macOS (universal), all three embedded in every
+sidecar build, checked against their SHA-256 and installed per game. The
+hashes are recorded in `THIRD_PARTY_NOTICES.md`. `BepInEx/core` is the same in
+all three; only the Doorstop library and the start script differ. Its `changelog.txt` is never extracted,
 so it cannot collide with a game's own file.
 
 **Why.** BepInEx 5 is the established Mono mod loader and ships HarmonyX for
@@ -109,6 +143,46 @@ unmodified upstream binary with its licence text.
 
 If a game already has the player's own BepInEx 5, SpecTuner uses it and never
 removes it. Another mod loader, or BepInEx 6, is refused.
+
+### On Linux and macOS SpecTuner starts the game itself, and there is a Play button
+
+On Windows the game loads Doorstop's `winhttp.dll` from its own folder, so
+the loader starts with every launch from anywhere. On Linux and macOS nothing
+loads a library from the game folder by itself: Doorstop has to be injected
+through environment variables when the game starts. BepInEx's own answer is
+`run_bepinex.sh`, which players normally edit and run. SpecTuner instead
+starts the game with the same variables the script would set (Linux
+`LD_PRELOAD`; macOS `DYLD_INSERT_LIBRARIES` passed through `/usr/bin/arch`),
+for its measured runs, its mod tests and the new `play` command. The Changes
+panel shows **Play** and **Play without changes**. For Steam games, `play`
+returns the launch option BepInEx documents (`./run_bepinex.sh %command%`),
+and the panel shows it with a **Copy** button.
+
+**Why.** Editing a shell script is not something a non-technical player
+should have to do, and a script edited by hand cannot be undone cleanly. The
+sidecar copies the script's defaults, never runs or edits it, and installs it
+only for the Steam launch option. **Play without changes** gives players a
+way to compare, and to tell whether a problem comes from a change; on
+Windows it uses Doorstop's documented `--doorstop-enabled false`, so no file
+changes there either. The launch option is shown, not written into Steam's
+settings: SpecTuner changes only its own files.
+
+### A macOS app is never altered or re-signed
+
+On macOS everything SpecTuner adds sits next to the `.app`, never inside it.
+If the program slice that would run is signed with the hardened runtime and
+lacks the entitlements that allow injected libraries
+(`com.apple.security.cs.allow-dyld-environment-variables` or
+`com.apple.security.cs.disable-library-validation`), the game is declined
+with `LOADER_BLOCKED`.
+
+**Why.** Writing into the app, or stripping and replacing its signature,
+changes the player's game files and breaks the developer's seal, which the
+game-files rules forbid. It would also mean working around a macOS
+protection, which SpecTuner never does. Declining clearly is the honest result. **Unproven.**
+The rule is a reading of Apple's documentation; no real game has confirmed
+it. A run where the loader never started adds a plain sentence that macOS may
+be keeping add-ons out of the app, which covers cases the rule misses.
 
 ### BepInEx entrypoint for Unity 6000 and later
 
@@ -192,6 +266,27 @@ model is tricked into writing something else. **Known limit.** Code reached only
 through reflection strings is not caught, because mods need reflection to read
 game fields.
 
+### The safety check covers everything a mod can reference
+
+Every dll in the game's `Managed/` folder, plus BepInEx's core, is a compile
+reference, so a mod can call anything in them, not only the .NET basics. A
+review of `BepInEx/core`, the UnityEngine modules and the Mono libraries games
+ship added about a hundred rules to `SafetyCheck.Rules`: native code through
+MonoMod (`DynDll`, `NativeDetour` and the like) and `BepInEx.Unix`, direct
+system calls through `Mono.Unix` and `Mono.Posix`, generating or loading code
+(MonoMod's `DynamicMethodDefinition`, `Mono.CSharp`, BepInEx's preloader and
+type loader), file access through XML, zip, Cecil, SQLite, resources, Harmony's
+file log, BepInEx config files at any path, screenshots and asset bundles,
+the legacy networking classes, forced crashes, more thread APIs, and camera
+and microphone. The contract lists them all.
+
+**Why.** A rule on `File` or `DllImport` means little if another referenced
+library offers the same reach. `Mono.Posix` and MonoMod's Unix code, for
+example, give direct system calls (chmod, unlink, exec, setenv), which
+matters more now that Linux and macOS games are in scope. Allowed as before:
+reflection, `Path`, `MemoryStream`, the plugin's own `Config`, and all of
+HarmonyLib's patching.
+
 ### Every mod build is tested
 
 `build-plugin` starts the game once after every build (a short warm-up and a
@@ -208,8 +303,9 @@ told the player it worked. The cost is one game start per build.
 
 BepInEx 5 keeps Unity's own messages out of `LogOutput.log` by default, so an
 exception thrown in a mod's `Awake` or `Update` appears only in `Player.log`
-under `%USERPROFILE%\AppData\LocalLow`. The sidecar reads it when it was
-written during the run. That file is shared by every copy of the same game on
+under `%USERPROFILE%\AppData\LocalLow` (Linux `~/.config/unity3d`, macOS
+`~/Library/Logs`, as Unity's manual says; not yet confirmed on a real game).
+The sidecar reads it when it was written during the run. That file is shared by every copy of the same game on
 the PC.
 
 **Considered and rejected.** Setting BepInEx's `WriteUnityLog = true`, which would
@@ -366,13 +462,66 @@ editor and repository tooling, translated readmes and upstream docs; the
 built-in GUI plugins SpecTuner never showed (terminal, file browser, code
 review, browser pane and others); the terminal UI and every command of the
 server program except `serve` and `--version`; the other languages; Mac and
-Linux packaging and the self-updater.
+Linux packaging (since rebuilt for SpecTuner, see "Linux and macOS builds"), and
+the self-updater.
 
 **Kept.** The tests of the remaining code, because they are how a change is
 checked. Also still in the tree although unused: the coding tools and coding
 services inside the core package (switched off by configuration and refused
 by the server) and app screens the SpecTuner profile hides. Removing them is a
 refactor of the core and has not been done.
+
+### Linux and macOS builds
+
+The app builds for Linux x64 (AppImage and deb) and macOS on Apple Silicon
+(dmg and zip) as well as Windows x64, with the server and sidecar bundled.
+A smoke test on GitHub's Linux and macOS runners builds them and starts the
+packaged app; nobody has used them on a real Linux PC or Mac yet.
+
+- **Built on each system.** electron-builder refuses to build macOS apps on
+  Windows, and Linux packages are built on Linux, so each system builds its
+  own sidecar, server program and app, on a tester's machine or in the smoke
+  test's job for that system. The server program is compiled natively rather
+  than cross-compiled.
+- **Unsigned macOS builds.** The macOS app gets an ad hoc signature over the
+  whole bundle, the server and sidecar inside it included, without the
+  hardened runtime. **Why:** Apple Silicon refuses to run arm64 code with no
+  signature at all, and an ad hoc signature keeps the seal valid so a player
+  can open the app with "Open Anyway". The hardened runtime with an ad hoc
+  signature would make macOS reject Electron's own frameworks. **Rejected for
+  now:** an Apple Developer ID (paid) for signing and notarization. Windows
+  builds are not code-signed either.
+- **One workflow: a smoke test.** `smoke.yml` builds SpecTuner on GitHub's
+  standard Linux, macOS and Windows runners and starts the packaged app.
+  There is no other workflow and no other job. **Why:** the runners exist to
+  answer one question: does the app build and start on each system. A
+  development machine that runs only Windows cannot answer it for Linux and
+  macOS.
+- **Only the owner starts it, and it hands out nothing.** Every job is
+  skipped unless the repository's owner started the run. Nothing runs for a
+  pull request or an ordinary push. A run keeps no build to download, and no
+  workflow publishes a release: releases are built and published by hand, and
+  testers build from their own clone. **Why:** who uses the runners, and who
+  gets a build and when, stays the owner's decision.
+- **It runs only while the repository is public.** Every job is skipped
+  unless the repository is public, has a time limit, and is cancelled by a
+  newer run of the same branch. **Why:** under those conditions the jobs cost
+  nothing; if the repository is made private, they stop instead of running up
+  a bill.
+- **Same lock-down.** The server ignores machine-wide config and macOS managed
+  preferences under the lock-down (`app/packages/cli/src/config-options.ts`),
+  because they load above SpecTuner's own config, and on macOS the managed
+  preferences are an organisation's OpenCode profile.
+- **One folder per system** (`SpecTunerEnv.folder`), and the server always
+  tells the sidecar where it is (`SPECTUNER_HOME`). **Why:** on Linux .NET
+  derives the sidecar's default folder from `XDG_DATA_HOME`, which SpecTuner
+  points into the server's home.
+- **The desktop keeps its own `XDG_*` off Windows** and gives SpecTuner's only
+  to the server process. **Why:** Linux desktops read them in the app itself
+  (the browser opener, file dialogs).
+- **Not brought back** from the starting code base: rpm, AppStream metadata,
+  Intel Macs, Linux arm64, the Icon Composer icon, the command-line installer
+  and the self-updater.
 
 ## Upgrading from builds made before the rename
 
@@ -410,6 +559,36 @@ request. The TypeScript side uses a fake sidecar and a scripted model.
 
 **Why.** Tests must run on any developer PC and in CI without a game or a model
 key. What needs a real game is checked by hand on a copy.
+
+### Platform differences live in one place, with a test switch
+
+Everything the sidecar does differently on Windows, Linux and macOS sits
+behind one `PlatformProfile` in `sidecar/src/SpecTuner.Sidecar/Platform/`:
+the game layout, the loader package and how the game starts, the user
+folders, and process handling. Code outside that folder never checks the
+operating system. `SPECTUNER_PLATFORM` (`windows`, `linux`, `macos`) selects
+a profile on any host; processes stay the host's. The fake game folders can be
+shaped like any of the three systems' games (minimal PE, ELF or Mach-O
+headers).
+
+**Why.** The development machine runs only Windows. With the switch, the
+Linux and macOS layout, scope gate, install, restore and launch environment
+are tested there on every run, and the Windows behaviour stays exactly as it
+was because its code path is separate. Tests that need a real process, signal
+or file mode run only when the suite is run on Linux or macOS. **Limit.** None of this
+proves that BepInEx loads into a real game on those systems; testers check
+that. The app never sets the switch, and the server environment drops it.
+
+### Remote testers send a diagnose report
+
+The sidecar's `diagnose` command writes a read-only report on the system,
+the game folder, the loader files, the logs and SpecTuner's record, with
+paths, user name and computer name replaced by placeholders.
+
+**Why.** Testers on Linux and macOS are not necessarily developers, and
+nobody else can see their screens. One command that gathers the facts a
+developer would ask for, and is safe to paste into a public report, replaces
+a long exchange of questions.
 
 ## Icon
 

@@ -73,7 +73,7 @@ public sealed class CodeTests : SidecarTest
     private GameFixture CreateCodeGame()
     {
         var game = CreateGame();
-        game.Write($"{game.Name}_Data/Managed/Assembly-CSharp.dll", GameAssembly.Value);
+        game.Write($"{game.DataRelative}/Managed/Assembly-CSharp.dll", GameAssembly.Value);
         return game;
     }
 

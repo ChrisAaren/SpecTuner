@@ -220,7 +220,7 @@ public sealed partial class BuildPluginCommand : ICommand
         if (outcome.Result is null)
         {
             var (_, pluginErrors) = GameRun.ModReport(game, plugins, lines, playerLines);
-            var failed = GameRun.FailedStart(game, runId, outcome, logErrors, pluginErrors);
+            var failed = GameRun.FailedStart(game, runId, outcome, logErrors, pluginErrors, loaderLogWritten: lines.Count > 0);
             if (!change.IsLive)
                 RestoreRecord(game.State, name, previousRecord);
             return new TestOutcome(null, failed);

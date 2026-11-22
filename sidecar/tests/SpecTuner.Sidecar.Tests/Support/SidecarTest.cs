@@ -18,9 +18,26 @@ public abstract class SidecarTest
         Environment.SetEnvironmentVariable("SPECTUNER_HOME", Home);
     }
 
+    /// <summary>
+    /// Runs the rest of the test with another platform's profile (layout, loader, folders), whatever
+    /// the host. Processes stay the host's, so a simulated game can be inspected, installed and
+    /// restored but not started.
+    /// </summary>
+    protected static void UsePlatform(SpecTuner.Sidecar.Platform.GamePlatform platform) =>
+        Environment.SetEnvironmentVariable(SpecTuner.Sidecar.Platform.Platforms.OverrideVariable, SpecTuner.Sidecar.Platform.Platforms.NameOf(platform));
+
+    /// <summary>Creates a game shaped for <paramref name="platform"/> and switches the profile to it.</summary>
+    protected GameFixture CreateGame(SpecTuner.Sidecar.Platform.GamePlatform platform, string name = "Fixture Game")
+    {
+        UsePlatform(platform);
+        return GameFixture.Create(TempDir, platform, name);
+    }
+
     [TestCleanup]
     public void DeleteTempHome()
     {
+        Environment.SetEnvironmentVariable(SpecTuner.Sidecar.Platform.Platforms.OverrideVariable, null);
+        Environment.SetEnvironmentVariable("SPECTUNER_FAKE_GAME_LAUNCH_FILE", null);
         Environment.SetEnvironmentVariable("SPECTUNER_HOME", null);
         try
         {

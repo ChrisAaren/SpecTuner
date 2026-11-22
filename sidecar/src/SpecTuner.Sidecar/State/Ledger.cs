@@ -160,7 +160,7 @@ public sealed class Ledger
 
     public void Commit(ChangeEntry entry, IEnumerable<string> files)
     {
-        entry.Files = files.Distinct(GameTree.PathComparer).ToList();
+        entry.Files = files.Distinct(_baseline.Comparer).ToList();
         entry.Status = ChangeStatus.Active;
         Save();
     }
@@ -199,7 +199,7 @@ public sealed class Ledger
 
         var index = _entries.IndexOf(entry);
         var later = Live
-            .Where(e => _entries.IndexOf(e) > index && e.Files.Intersect(entry.Files, GameTree.PathComparer).Any())
+            .Where(e => _entries.IndexOf(e) > index && e.Files.Intersect(entry.Files, _baseline.Comparer).Any())
             .ToList();
         if (later.Count > 0)
             throw new SidecarException(ErrorCodes.RevertBlocked,
@@ -259,7 +259,7 @@ public sealed class Ledger
         foreach (var relative in files)
         {
             var target = GameTree.Full(root, relative);
-            if (snapshot.Has(relative))
+            if (snapshot.Has(relative, _baseline.Comparer))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(Snapshot.StoredFile(snapshotDir, relative), target, overwrite: true);

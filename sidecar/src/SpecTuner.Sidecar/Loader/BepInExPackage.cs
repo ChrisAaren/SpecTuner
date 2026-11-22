@@ -1,27 +1,34 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using SpecTuner.Sidecar.Platform;
 
 namespace SpecTuner.Sidecar.Loader;
 
-/// <summary>The BepInEx 5 zip embedded in the sidecar exe.</summary>
+/// <summary>
+/// The BepInEx 5 zips embedded in the sidecar: one per platform (Windows x64, Linux x64, macOS
+/// universal), unmodified upstream release assets checked against their SHA-256. All three are in
+/// every build, so any platform's install can be tested on any host. <c>BepInEx/core</c> is
+/// byte-identical in all of them.
+/// </summary>
 public static class BepInExPackage
 {
-    public const string Version = "5.4.23.6";
-    public const string ResourceName = "BepInEx_win_x64_5.4.23.6.zip";
-    public const string Sha256 = "6c57a714a892efb4e9e1fef63d608a3391f30ec984031c465404e4ee381a0755";
+    public const string Version = LoaderKit.Version;
 
     /// <summary>Entries we never extract into a game folder.</summary>
     public static readonly string[] SkippedEntries = ["changelog.txt"];
 
-    public static ZipArchive Open()
+    /// <summary>The current platform's package.</summary>
+    public static ZipArchive Open() => Open(Platforms.Current.Loader);
+
+    public static ZipArchive Open(LoaderKit kit)
     {
-        using var resource = typeof(BepInExPackage).Assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new InvalidOperationException($"Embedded resource {ResourceName} is missing.");
+        using var resource = typeof(BepInExPackage).Assembly.GetManifestResourceStream(kit.ResourceName)
+            ?? throw new InvalidOperationException($"Embedded resource {kit.ResourceName} is missing.");
         var buffer = new MemoryStream();
         resource.CopyTo(buffer);
         var actual = Convert.ToHexStringLower(SHA256.HashData(buffer.ToArray()));
-        if (actual != Sha256)
-            throw new InvalidOperationException($"Embedded BepInEx package is corrupt (sha256 {actual}).");
+        if (actual != kit.Sha256)
+            throw new InvalidOperationException($"Embedded BepInEx package {kit.ResourceName} is corrupt (sha256 {actual}).");
         buffer.Position = 0;
         return new ZipArchive(buffer, ZipArchiveMode.Read);
     }

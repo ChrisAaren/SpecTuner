@@ -20,6 +20,7 @@ import {
 import { homedir } from "node:os"
 import { VERSION } from "../constants"
 import { marks } from "../lifecycle/marks"
+import { serverLogDir } from "../spectuner"
 import {
   EXPORT_ARCHIVE_TIMEOUT_MS,
   initialLoggingState,
@@ -350,7 +351,16 @@ function manifest(path: Path.Path, netLogPath: string | undefined) {
 function serverLogRoots(path: Path.Path) {
   const xdgData = process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share")
 
-  return [...new Set([path.join(xdgData, "spectuner", "log"), path.join(app.getPath("userData"), "spectuner", "log")])]
+  // SpecTuner: the server's own log folder first (on macOS and Linux the app's XDG_DATA_HOME is the player's).
+  const server = serverLogDir()
+
+  return [
+    ...new Set([
+      ...(server ? [server] : []),
+      path.join(xdgData, "spectuner", "log"),
+      path.join(app.getPath("userData"), "spectuner", "log"),
+    ]),
+  ]
 }
 
 type Entry = { name: string; path: string; offset: number } | { name: string; data: Uint8Array }

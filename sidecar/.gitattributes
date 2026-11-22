@@ -1,0 +1,5 @@
+# The probe plugin's source is embedded in the sidecar and hashed (ProbeInstaller.SourceHash) to decide
+# when a game's probe must be rebuilt: it must be the same bytes on every system, whatever core.autocrlf says.
+src/SpecTuner.Sidecar/Probe/*.cs text eol=lf
+# Bundled upstream archives: never touched.
+assets/bepinex/*.zip binary

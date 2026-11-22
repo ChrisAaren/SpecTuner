@@ -17,6 +17,14 @@ import type { Info } from "@spectuner/client/service"
 /** The record of a finished run, written under the new home. Its presence with `complete: true` ends the step. */
 export const MARKER = "upgraded-from-opencode.json"
 
+/**
+ * Whether the step can apply on this system. The builds that used opencode's names shipped for Windows only, and the
+ * process lookup it relies on uses Windows PowerShell, so on every other system the step never runs.
+ */
+export function applies(platform: NodeJS.Platform) {
+  return platform === "win32"
+}
+
 /** The old build's executable name, as staged under `<userData>\cli\<version>-<arch>\`. */
 export const OLD_SERVER_EXE = "opencode-cli.exe"
 

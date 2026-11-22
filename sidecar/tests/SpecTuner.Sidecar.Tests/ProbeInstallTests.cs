@@ -42,7 +42,7 @@ public sealed class ProbeInstallTests : SidecarTest
     public void ProbeThatDoesNotCompile_FailsCleanly_AndChangesNothing()
     {
         var game = CreateGame();
-        File.Delete(game.Full($"{game.Name}_Data/Managed/UnityEngine.dll")); // nothing to compile against
+        File.Delete(game.Full($"{game.DataRelative}/Managed/UnityEngine.dll")); // nothing to compile against
         var before = game.Hashes();
 
         var envelope = Run("install", new { gamePath = game.Root });
