@@ -1,0 +1,128 @@
+# What must never be committed here: anything written by a running program or a
+# working session. Logs, transcripts, run output and work notes can hold folder
+# paths, user and computer names, hardware details and a game's code.
+# Put throwaway files in /tmp/ (ignored below). See CLAUDE.md, "Conventions".
+
+# ----- Scratch space -----
+/tmp/
+/scratch/
+/out/
+/output/
+
+# ----- Local test games. Bring your own game; never commit one. -----
+/test-game/
+/test-game-pristine/
+/test-games/
+
+# ----- Logs -----
+*.log
+*.log.*
+*.log-*
+# Root only: the sidecar has a source folder named Logs, and names match without regard to case on Windows.
+/logs/
+*.trace
+*.dmp
+*.mdmp
+*.stackdump
+npm-debug.log*
+bun-debug.log*
+# Unity and the mod loader write these inside a game folder and the user profile.
+Player.log
+Player-prev.log
+LogOutput.log
+ErrorLog.log
+# Unity crash reports
+Crashes/
+crash.dmp
+
+# ----- Output of agent and benchmark runs -----
+transcript.md
+transcript.json
+transcript*.jsonl
+*.transcript.md
+*.transcript.json
+/transcripts/
+/acceptance/
+docs/acceptance/
+/runs/
+run-*.json
+benchmark.json
+benchmarks.json
+benchmark-*.json
+*.cassette.local.json
+
+# ----- Work notes and diaries -----
+# Notes a person or a coding agent keeps while working belong in the pull
+# request or an issue, not in the repository. Lasting design reasons go in
+# docs/design-decisions.md.
+PROGRESS.md
+PROGRESS-*.md
+DECISIONS.md
+BLOCKED.md
+WORKLOG.md
+JOURNAL.md
+SCRATCH.md
+HANDOFF.md
+# These names are also used by real documents deeper in the tree, so only the top level is ignored.
+/NOTES.md
+/STATUS.md
+/PLAN.md
+/TODO.md
+*.local.md
+CLAUDE.local.md
+AGENTS.local.md
+
+# ----- Local settings, keys and session data -----
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.jsonc
+local.jsonc
+.claude/settings.local.json
+.claude/projects/
+.claude/todos/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ----- Screen captures taken while testing -----
+# Pictures for the documentation live in docs/screenshots/ and must show no
+# real paths, names or games.
+/screenshots/
+/captures/
+*.screenshot.png
+
+# ----- Private backups and repository bundles -----
+/private-backups/
+*.bundle
+
+# ----- Build output -----
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+/artifacts/
+node_modules/
+
+# ----- Blender working files (the icon is rebuilt from branding/make_icon.py) -----
+*.blend
+*.blend1
+
+# ----- Editor and operating system files -----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+*~

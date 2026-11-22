@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SpecTuner.Sidecar/SpecTuner.Sidecar.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SpecTuner.FakeGame/SpecTuner.FakeGame.csproj" />
+    <Project Path="tests/SpecTuner.Sidecar.Tests/SpecTuner.Sidecar.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>spectuner-sidecar</AssemblyName>
+    <RootNamespace>SpecTuner.Sidecar</RootNamespace>
+    <Version>0.2.0</Version>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embedded so the published sidecar is a single file. -->
+    <EmbeddedResource Include="..\..\assets\bepinex\BepInEx_win_x64_5.4.23.6.zip" LogicalName="BepInEx_win_x64_5.4.23.6.zip" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Probe plugin source, compiled per game at install time. ProbePlugin.cs needs Unity and BepInEx,
+         so it is only embedded; FrameStats.cs and MiniJson.cs are also compiled in here so tests cover them. -->
+    <Compile Remove="Probe\ProbePlugin.cs" />
+    <EmbeddedResource Include="Probe\ProbePlugin.cs;Probe\FrameStats.cs;Probe\MiniJson.cs" LogicalName="probe/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ICSharpCode.Decompiler" Version="11.2.0.10050" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0" />
+  </ItemGroup>
+
+</Project>

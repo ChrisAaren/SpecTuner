@@ -1,0 +1,37 @@
+[data-component="logo-mark"] {
+  width: 16px;
+  aspect-ratio: 1;
+  color: var(--icon-strong-base);
+}
+
+[data-component="logo-splash"] {
+  color: var(--icon-strong-base);
+}
+
+/* The mark and the name scale with the lockup's width: its children size in container units. */
+[data-component="logo-lockup"] {
+  container-type: inline-size;
+  color: var(--icon-strong-base);
+
+  [data-slot="logo-lockup-row"] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3cqi;
+  }
+
+  [data-slot="logo-lockup-mark"] {
+    flex: none;
+    width: 18cqi;
+    height: 18cqi;
+  }
+
+  [data-slot="logo-lockup-name"] {
+    font-family: var(--font-family-sans);
+    font-size: 14cqi;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+}

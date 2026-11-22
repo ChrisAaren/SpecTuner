@@ -1,0 +1,139 @@
+#!/usr/bin/env bun
+
+import { ensurePluginRuntime } from "@spectuner/plugin/runtime"
+import { NodeRuntime, NodeServices } from "@effect/platform-node"
+import { Cause, Effect } from "effect"
+import { defaultTeardown, getErrorReported } from "effect/Runtime"
+import { Commands } from "./commands/commands"
+import { Runtime } from "./framework/runtime"
+import { Observability } from "@spectuner/util/observability"
+import { SPECTUNER_ARTIFACT, SPECTUNER_CHANNEL, SPECTUNER_LOCAL, SPECTUNER_VERSION } from "./version"
+import { LayerNode } from "@spectuner/util/effect/layer-node"
+import { Global } from "@spectuner/util/global"
+import { AppProcess } from "@spectuner/util/process"
+import { Npm } from "@spectuner/util/npm"
+import { EffectFlock } from "@spectuner/util/effect-flock"
+import { Heap } from "./heap"
+import { CpuProfile } from "./cpu-profile"
+import { ShutdownDeadline } from "./shutdown-deadline"
+
+// Keep requests to the local service off any proxy. Bun reads lowercase `no_proxy` alone whenever it is set, so both
+// spellings get the same merged list.
+const noProxy = [
+  ...new Set(
+    [process.env.NO_PROXY, process.env.no_proxy, "127.0.0.1,localhost,::1"].flatMap((value) =>
+      (value ?? "").split(",").flatMap((entry) => entry.trim() || []),
+    ),
+  ),
+].join(",")
+
+process.env.NO_PROXY = noProxy
+process.env.no_proxy = noProxy
+
+ensurePluginRuntime()
+
+let terminated = false
+
+const args = process.argv.slice(2)
+
+// With no arguments there is nothing to run: print what the program offers and exit.
+if (args.length === 0) {
+  process.stdout.write(
+    [
+      "SpecTuner server. The SpecTuner app starts this program; you do not need to run it yourself.",
+      "",
+      "Usage:",
+      "  spectuner serve [--service] [--hostname <host>] [--port <port>] [--cors <origin>]",
+      "  spectuner --version",
+      "  spectuner --help",
+      "",
+    ].join("\n"),
+  )
+  process.exit(0)
+}
+
+const Handlers = Runtime.handlers(Commands, {
+  serve: () => import("./commands/handlers/serve"),
+})
+
+Effect.gen(function* () {
+  yield* Heap.listen
+  yield* CpuProfile.listen
+  yield* ShutdownDeadline.install()
+  // runMain reports every signal interruption as 130; remember a SIGTERM so the exit code is 143.
+  process.once("SIGTERM", () => {
+    terminated = true
+  })
+  const runFork = Effect.runForkWith(yield* Effect.context<never>())
+  const uncaughtException = (cause: Error, origin: "uncaughtException" | "unhandledRejection") => {
+    runFork(Effect.logError("uncaught exception", { cause, origin }))
+  }
+  const unhandledRejection = (cause: unknown) => {
+    runFork(Effect.logError("unhandled rejection", { cause }))
+  }
+  process.on("uncaughtException", uncaughtException)
+  process.on("unhandledRejection", unhandledRejection)
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      process.off("uncaughtException", uncaughtException)
+      process.off("unhandledRejection", unhandledRejection)
+    }),
+  )
+  yield* Effect.logInfo("cli starting", {
+    version: SPECTUNER_VERSION,
+    channel: SPECTUNER_CHANNEL,
+    local: SPECTUNER_LOCAL,
+    args,
+  })
+  return yield* Runtime.run(Commands, Handlers, { version: SPECTUNER_VERSION })
+}).pipe(
+  Effect.catchCause((cause) =>
+    Effect.logError("cli process failed", {
+      cause,
+      args,
+    }).pipe(Effect.andThen(Effect.failCause(cause))),
+  ),
+  Effect.annotateLogs({ role: "cli" }),
+  Effect.provide(
+    LayerNode.compile(LayerNode.group([Global.node, AppProcess.node, Npm.node, EffectFlock.node]), {
+      replacements: [
+        Global.node.replace(
+          Global.layerWith(process.env.SPECTUNER_CONFIG_DIR ? { config: process.env.SPECTUNER_CONFIG_DIR } : {}),
+        ),
+      ],
+    }),
+  ),
+  Effect.provide(
+    Observability.layer({
+      endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      headers: process.env.OTEL_EXPORTER_OTLP_HEADERS,
+      client: process.env.SPECTUNER_CLIENT ?? SPECTUNER_ARTIFACT,
+      version: SPECTUNER_VERSION,
+      channel: SPECTUNER_CHANNEL,
+    }),
+  ),
+  Effect.provide(NodeServices.layer),
+  Effect.scoped,
+  // runMain's default reporter logs the fatal cause to stdout. Write it to stderr instead: the
+  // desktop and `Service.ensure` only capture stderr from `serve --service`, so this is the only
+  // channel through which a startup failure's reason reaches the user.
+  Effect.tapCause((cause) =>
+    Effect.sync(() => {
+      if (Cause.hasInterruptsOnly(cause)) return
+      if (!getErrorReported(Cause.squash(cause))) return
+      process.stderr.write(Cause.pretty(cause) + "\n")
+    }),
+  ),
+  NodeRuntime.runMain({
+    disableErrorReporting: true,
+    teardown: (exit) =>
+      defaultTeardown(exit, (code) => {
+        // Commands report failures through process.exitCode.
+        const status = code === 0 ? (process.exitCode ?? 0) : code === 130 && terminated ? 143 : code
+        // process.exit drops output still queued for a pipe; ending the streams waits for it.
+        void Promise.all(
+          [process.stdout, process.stderr].map((stream) => new Promise<void>((resolve) => stream.end(() => resolve()))),
+        ).then(() => process.exit(status))
+      }),
+  }),
+)

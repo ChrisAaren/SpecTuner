@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@spectuner/cli",
+  "version": "2.3.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./server-process": "./src/server-process.ts"
+  },
+  "scripts": {
+    "build": "bun run script/build.ts",
+    "dev": "bun run src/index.ts",
+    "test": "bun test --timeout 30000 --only-failures",
+    "typecheck": "bun check --no-script -b",
+    "typecheck:tsc": "tsc -b"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@spectuner/client": "workspace:*",
+    "@spectuner/plugin": "workspace:*",
+    "@opencode/pty": "0.6.0",
+    "@spectuner/schema": "workspace:*",
+    "@spectuner/server": "workspace:*",
+    "@spectuner/util": "workspace:*",
+    "@parcel/watcher": "2.5.1",
+    "@silvia-odwyer/photon-node": "0.3.4",
+    "effect": "catalog:",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "@spectuner/script": "workspace:*",
+    "@spectuner/protocol": "workspace:*",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native": "catalog:",
+    "@lydell/node-pty-win32-x64": "1.2.0-beta.12",
+    "@ff-labs/fff-bin-win32-x64": "0.10.5",
+    "@yuuang/ffi-rs-win32-x64-msvc": "1.3.2",
+    "@parcel/watcher-win32-x64": "2.5.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anomalyco/opencode.git",
+    "directory": "packages/cli"
+  }
+}

@@ -1,0 +1,408 @@
+import { batch, createEffect, createMemo, createSignal, on, onCleanup, untrack, type JSX } from "solid-js"
+import { createStore } from "solid-js/store"
+import { Option, Schema, SchemaGetter } from "effect"
+import { createSimpleContext } from "@spectuner/ui/context"
+import { showToast } from "@spectuner/ui/toast"
+import {
+  I18nProvider,
+  type UiI18n,
+  pluralCategory,
+  resolveTemplate,
+  type UiI18nPluralLookupKey,
+  type UiI18nPluralKey,
+  type UiPluralCategory,
+} from "@spectuner/ui/context/i18n"
+import { Persist, persisted } from "@/runtime/persistence/storage"
+import { Persistence } from "@/runtime/persistence/schema"
+import en from "@/runtime/i18n/en"
+import { dict } from "@spectuner/ui/i18n/en"
+import { overrides } from "@/spectuner/i18n"
+import {
+  createDesktopNativeBundle,
+  detectDesktopNativeLocale,
+  DESKTOP_NATIVE_ENGLISH,
+  DESKTOP_NATIVE_LABELS,
+  DESKTOP_NATIVE_LOCALES,
+  DESKTOP_NATIVE_LOCALE_TAGS,
+  type DesktopNativeBundle,
+  type DesktopNativeLocale,
+} from "@/runtime/i18n/desktop-native"
+import {
+  createLanguageState,
+  selectDictionary,
+  selectLocale,
+  transitionLanguage,
+  type LanguageEffect,
+  type LanguageEvent,
+} from "@/runtime/i18n/machine"
+
+export type Locale = DesktopNativeLocale
+
+export type Direction = "ltr" | "rtl"
+
+// Right-to-left locales, such as "ar" or "he". None while the app is English only.
+const RTL_LOCALES: ReadonlySet<Locale> = new Set<Locale>()
+
+function localeDirection(locale: Locale): Direction {
+  return RTL_LOCALES.has(locale) ? "rtl" : "ltr"
+}
+
+type RawDictionary = typeof en & typeof dict
+
+type Dictionary = RawDictionary
+
+type AppI18nKey = Extract<keyof typeof en, string>
+
+type AppI18nPluralKey = {
+  [Key in AppI18nKey]: Key extends `${infer Base}.other` ? (`${Base}.one` extends AppI18nKey ? Base : never) : never
+}[AppI18nKey]
+
+type PluralKey = AppI18nPluralKey | UiI18nPluralKey
+
+type AppI18nPluralLookupKey = `${AppI18nPluralKey}.${UiPluralCategory}`
+
+type TranslationKey<Key extends Extract<keyof Dictionary, string>> = Key extends
+  | AppI18nPluralLookupKey
+  | UiI18nPluralLookupKey
+  ? never
+  : Key
+
+export function richTemplateParts<Value>(template: string, params: Record<string, Value>) {
+  return template
+    .split(/({{\s*[^}]+?\s*}})/g)
+    .filter(Boolean)
+    .map((part) => {
+      const match = part.match(/^{{\s*([^}]+?)\s*}}$/)
+
+      if (!match) return part
+
+      return params[match[1]] ?? ""
+    })
+}
+
+export function localizedListParts<Value>(locale: string, items: readonly Value[]) {
+  return new Intl.ListFormat(locale, { style: "long", type: "conjunction" })
+    .formatToParts(items.map((_, index) => String(index)))
+    .map((part) => (part.type === "element" ? items[Number(part.value)] : part.value))
+}
+
+function cookie(locale: Locale) {
+  return `oc_locale=${encodeURIComponent(locale)}; Path=/; Max-Age=31536000; SameSite=Lax`
+}
+
+const LOCALES: readonly Locale[] = DESKTOP_NATIVE_LOCALES
+
+const LocaleSchema = Schema.Literals(DESKTOP_NATIVE_LOCALES)
+
+const StoredLocaleSchema = Schema.Struct({
+  locale: Schema.String.pipe(
+    Schema.decodeTo(LocaleSchema, {
+      decode: SchemaGetter.transform(normalizeLocale),
+      encode: SchemaGetter.transform((locale) => locale),
+    }),
+  ),
+})
+
+const INTL = DESKTOP_NATIVE_LOCALE_TAGS
+
+// SAFETY: SpecTuner's overrides replace string values with strings; the native keys' literal types only record
+// upstream's English (`DESKTOP_NATIVE_ENGLISH` is `as const`), and every reader takes a string.
+const base = { ...en, ...dict, ...overrides } as Dictionary
+
+const dicts = new Map<Locale, Dictionary>([["en", base]])
+
+// The dictionaries of the other locales, loaded when chosen. SpecTuner is English only, so there are none. A locale
+// added back merges its app and UI dictionaries over the English ones, with SpecTuner's overrides on top:
+//   de: () => Promise.all([import("@/runtime/i18n/de"), import("@spectuner/ui/i18n/de")]).then(([a, b]) =>
+//     ({ ...base, ...a.dict, ...b.dict, ...overrides }) as Dictionary),
+const loaders: Partial<Record<Locale, () => Promise<Dictionary>>> = {}
+
+function loadDict(locale: Locale) {
+  const hit = dicts.get(locale)
+
+  if (hit) return Promise.resolve(hit)
+
+  const load = loaders[locale]
+
+  if (!load) return Promise.resolve(base)
+
+  return load().then((next: Dictionary) => {
+    dicts.set(locale, next)
+
+    return next
+  })
+}
+
+export function loadLocaleDict(locale: Locale) {
+  return loadDict(locale).then(() => undefined)
+}
+
+function detectLocale(): Locale {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- probing for a browser global
+  if (typeof navigator !== "object") return "en"
+
+  return detectDesktopNativeLocale(navigator.languages?.length ? navigator.languages : [navigator.language])
+}
+
+export function normalizeLocale(value: string): Locale {
+  return Option.getOrElse(Schema.decodeUnknownOption(LocaleSchema)(value), () => "en")
+}
+
+export const languageSchema = Persistence.struct({
+  locale: StoredLocaleSchema.fields.locale,
+})
+
+function readStoredLocale() {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- probing for a browser global
+  if (typeof localStorage !== "object") return
+
+  try {
+    const raw = localStorage.getItem("spectuner.global.dat:language")
+
+    if (!raw) return
+    const next = Schema.decodeUnknownOption(Schema.fromJsonString(StoredLocaleSchema))(raw)
+
+    if (Option.isNone(next)) return
+
+    return next.value.locale
+  } catch {
+    return
+  }
+}
+
+const warm = readStoredLocale() ?? detectLocale()
+
+const initialLocale =
+  warm === "en"
+    ? Promise.resolve(warm)
+    : loadDict(warm).then(
+        () => warm,
+        () => "en" as const,
+      )
+
+export function loadInitialLocale() {
+  return initialLocale
+}
+
+export const { use: useLanguage, provider: LanguageProvider } = createSimpleContext({
+  name: "Language",
+  gate: false,
+  init: (props: { locale?: Locale; onNativeTranslations?: (bundle: DesktopNativeBundle) => void }) => {
+    const initial = props.locale ?? readStoredLocale() ?? detectLocale()
+    const [store, setStore, _, ready] = persisted(Persist.global("language"), languageSchema, { locale: initial })
+
+    const stored = untrack(() => store.locale)
+
+    const boot = createLanguageState({
+      initial: stored,
+      cached: dicts.get(stored),
+      fallbackLocale: "en",
+      fallbackDictionary: base,
+    })
+
+    const [machine, setMachine] = createSignal(boot.state)
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const dispatch = (event: LanguageEvent<Dictionary>) =>
+      batch(() => {
+        const prev = untrack(machine)
+        const next = transitionLanguage(prev, event)
+
+        if (next.state !== prev) setMachine(next.state)
+        next.effects.forEach(run)
+      })
+
+    const run = (effect: LanguageEffect) => {
+      if (effect.type === "load")
+        return void Promise.try(() => loadDict(effect.locale)).then(
+          (dictionary) => dispatch({ type: "load.succeeded", attempt: effect.attempt, dictionary }),
+          () => dispatch({ type: "load.failed", attempt: effect.attempt }),
+        )
+
+      if (effect.type === "timer.start") {
+        clearTimeout(timer)
+        timer = setTimeout(() => dispatch({ type: "load.timed-out", attempt: effect.attempt }), effect.timeoutMs)
+
+        return
+      }
+
+      if (effect.type === "timer.stop") {
+        clearTimeout(timer)
+        timer = undefined
+
+        return
+      }
+
+      if (effect.type === "persist") {
+        if (untrack(() => store.locale) !== effect.locale) setStore("locale", effect.locale)
+
+        return
+      }
+
+      showToast({
+        variant: "error",
+        title: t("toast.language.loadFailed.title", { language: label(effect.locale) }),
+      })
+    }
+
+    // The committed pair: every reader switches only once the dictionary for the new locale is in hand, so `t()`
+    // never suspends and the direction never flips ahead of the strings.
+    const locale = createMemo(() => selectLocale(machine()))
+    const dictionary = createMemo(() => selectDictionary(machine()))
+    const intl = createMemo(() => INTL[locale()])
+    // SAFETY: widens the initial `undefined` so a direction can be stored later.
+    const [layout, setLayout] = createStore({ direction: undefined as Direction | undefined })
+    const direction = createMemo(() => layout.direction ?? localeDirection(locale()))
+
+    const layoutLocale = createMemo(() => {
+      if (!layout.direction) return intl()
+
+      // Kobalte derives menu direction from locale rather than accepting a direction override.
+      return layout.direction === "rtl" ? "ar" : "en"
+    })
+
+    const t = <Key extends Extract<keyof Dictionary, string>>(
+      key: TranslationKey<Key>,
+      params?: Record<string, string | number | boolean>,
+    ) => {
+      const template: string | undefined = dictionary()[key]
+
+      // A key outside the dictionary translates to nothing, as it did with the package translator.
+      return template === undefined ? template : resolveTemplate(template, params)
+    }
+
+    const pluralForm = (
+      key: PluralKey,
+      category: UiPluralCategory,
+      params?: Record<string, string | number | boolean>,
+    ) => {
+      // SAFETY: every dictionary value is a string (`language.test.ts`).
+      const current = dictionary() as Record<string, string>
+      const candidate = `${key}.${category}`
+      const fallback = `${key}.other`
+
+      return resolveTemplate(current[candidate] ?? current[fallback] ?? fallback, params)
+    }
+
+    const plural = (key: PluralKey, count: number, params?: Record<string, string | number | boolean>) =>
+      pluralForm(key, pluralCategory(intl(), count), { ...params, count })
+
+    // "2 subagents · 1 script · 1 shell", or one group alone, as the iOS app's background-work capsule reads.
+    const activityGroups = (counts: { subagents: number; scripts?: number; shells: number }) =>
+      [
+        counts.subagents ? plural("session.activity.subagents", counts.subagents) : undefined,
+        counts.scripts ? plural("session.activity.scripts", counts.scripts) : undefined,
+        counts.shells ? plural("session.activity.shells", counts.shells) : undefined,
+      ].filter((group) => group !== undefined)
+
+    const activitySummary = (counts: { subagents: number; scripts?: number; shells: number }) =>
+      activityGroups(counts).reduceRight(
+        (rest, group) => (rest ? t("session.activity.summary", { subagents: group, shells: rest }) : group),
+        "",
+      )
+
+    const tDynamic = <Key extends Extract<keyof Dictionary, string>>(
+      key: TranslationKey<Key>,
+      source: string,
+      params?: Record<string, string | number | boolean>,
+    ) => (intl().toLowerCase().split("-")[0] === "en" ? resolveTemplate(source, params) : t(key, params))
+
+    const rich = <Key extends Extract<keyof Dictionary, string>>(
+      key: TranslationKey<Key>,
+      params: Record<string, JSX.Element>,
+    ) => {
+      // SAFETY: every dictionary value is a string (`language.test.ts`).
+      const current = dictionary() as Record<string, string>
+
+      return richTemplateParts(current[key] ?? key, params)
+    }
+
+    const activitySummaryRich = (
+      counts: { subagents: number; scripts?: number; shells: number },
+      render: (label: string) => JSX.Element,
+    ): JSX.Element =>
+      activityGroups(counts).reduceRight<JSX.Element | undefined>(
+        (rest, group) =>
+          rest ? rich("session.activity.summary", { subagents: render(group), shells: rest }) : render(group),
+        undefined,
+      ) ?? render("")
+
+    const list = (items: readonly JSX.Element[]) => localizedListParts(intl(), items)
+
+    const label = (value: Locale) => DESKTOP_NATIVE_LABELS[value]
+
+    createEffect(() => {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- probing for a browser global
+      if (typeof document !== "object") return
+      const value = locale()
+      document.documentElement.lang = intl()
+      document.documentElement.dir = direction()
+      document.cookie = cookie(value)
+    })
+
+    createEffect(() => {
+      if (!props.onNativeTranslations) return
+      const current = dictionary()
+
+      props.onNativeTranslations(
+        createDesktopNativeBundle(locale(), (key) => current[key] ?? DESKTOP_NATIVE_ENGLISH[key]),
+      )
+    })
+
+    // Storage hydrating after mount, or another window picking a language.
+    createEffect(
+      on(
+        () => store.locale,
+        (next) => dispatch({ type: "locale.synced", locale: next, cached: dicts.get(next) }),
+        { defer: true },
+      ),
+    )
+
+    onCleanup(() => dispatch({ type: "disposed" }))
+    boot.effects.forEach(run)
+
+    return {
+      ready,
+      locale,
+      intl,
+      direction,
+      layoutLocale,
+      locales: LOCALES,
+      label,
+      t,
+      tDynamic,
+      plural,
+      pluralForm,
+      activitySummary,
+      activitySummaryRich,
+      rich,
+      list,
+      setLocale(next: Locale) {
+        const target = normalizeLocale(next)
+        dispatch({ type: "locale.requested", locale: target, cached: dicts.get(target) })
+      },
+      setDirection(next: Direction) {
+        setLayout("direction", next === localeDirection(locale()) ? undefined : next)
+      },
+    }
+  },
+})
+
+export function UiI18nBridge(props: { children?: JSX.Element }) {
+  const language = useLanguage()
+
+  return (
+    <I18nProvider
+      value={{
+        locale: language.intl,
+        layoutLocale: language.layoutLocale,
+        // SAFETY: `t` accepts the UI keys, which are a subset of the app dictionary.
+        t: language.t as UiI18n["t"],
+        plural: language.plural,
+        pluralForm: language.pluralForm,
+      }}
+    >
+      {props.children}
+    </I18nProvider>
+  )
+}

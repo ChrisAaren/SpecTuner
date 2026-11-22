@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@spectuner/modder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./config": "./src/config.ts",
+    "./env": "./src/env.ts",
+    "./plugin": "./plugin/index.ts",
+    "./rpc": "./plugin/rpc.ts"
+  },
+  "scripts": {
+    "serve": "bun run script/serve.ts",
+    "tools": "bun run script/tools.ts",
+    "test": "bun test --timeout 30000",
+    "typecheck": "bun check --no-script",
+    "typecheck:tsc": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@spectuner/plugin": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@spectuner/schema": "workspace:*",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native": "catalog:",
+    "typescript": "catalog:"
+  }
+}
